@@ -91802,6 +91802,15 @@ function cacheDependencies(cache, pythonVersion) {
         yield cacheDistributor.restoreCache();
     });
 }
+function readVersionFile(versionFile) {
+    const data = fs_1.default.readFileSync(versionFile, 'utf8');
+    const versions = data
+        .split('\n')
+        .map(input => input.trim())
+        .filter(x => x !== '');
+    core.info(`Resolved ${versionFile} as ${versions.join(', ')}`);
+    return versions;
+}
 function resolveVersionInputFromDefaultFile() {
     const couples = [
         ['.python-version', utils_1.getVersionInputFromPlainFile]
@@ -91830,7 +91839,7 @@ function resolveVersionInput() {
             if (!fs_1.default.existsSync(versionFile)) {
                 throw new Error(`The specified python version file at: ${versionFile} doesn't exist.`);
             }
-            versions = (0, utils_1.getVersionInputFromFile)(versionFile);
+            versions = readVersionFile(versionFile); // Use readVersionFile here
         }
         else {
             versions = resolveVersionInputFromDefaultFile();
