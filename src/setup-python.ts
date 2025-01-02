@@ -33,6 +33,16 @@ async function cacheDependencies(cache: string, pythonVersion: string) {
   await cacheDistributor.restoreCache();
 }
 
+function readVersionFile(versionFile: string) {
+  const data = fs.readFileSync(versionFile, 'utf8');
+  const versions = data
+    .split('\n')
+    .map(input => input.trim())
+    .filter(x => x !== '');
+  core.info(`Resolved ${versionFile} as ${versions.join(', ')}`);
+  return versions;
+}
+
 function resolveVersionInputFromDefaultFile(): string[] {
   const couples: [string, (versionFile: string) => string[]][] = [
     ['.python-version', getVersionInputFromPlainFile]
@@ -67,7 +77,7 @@ function resolveVersionInput() {
           `The specified python version file at: ${versionFile} doesn't exist.`
         );
       }
-      versions = getVersionInputFromFile(versionFile);
+      versions = readVersionFile(versionFile); // Use readVersionFile here
     } else {
       versions = resolveVersionInputFromDefaultFile();
     }
