@@ -91818,7 +91818,7 @@ function resolveVersionInputFromDefaultFile() {
     for (const [versionFile, _fn] of couples) {
         (0, utils_1.logWarning)(`Neither 'python-version' nor 'python-version-file' inputs were supplied. Attempting to find '${versionFile}' file.`);
         if (fs_1.default.existsSync(versionFile)) {
-            return _fn(versionFile);
+            return readVersionFile(versionFile);
         }
         else {
             (0, utils_1.logWarning)(`${versionFile} doesn't exist.`);

@@ -52,7 +52,7 @@ function resolveVersionInputFromDefaultFile(): string[] {
       `Neither 'python-version' nor 'python-version-file' inputs were supplied. Attempting to find '${versionFile}' file.`
     );
     if (fs.existsSync(versionFile)) {
-      return _fn(versionFile);
+      return readVersionFile(versionFile);
     } else {
       logWarning(`${versionFile} doesn't exist.`);
     }
