@@ -447,8 +447,8 @@ jobs:
       - name: Validate version
         run: |
           $pythonVersion = (python --version)
-          if ("$pythonVersion" -NotMatch "3.10"){
-            Write-Host "The current version is $pythonVersion; expected version is 3.10"
+          if ("$pythonVersion" -NotMatch "3.13"){
+            Write-Host "The current version is $pythonVersion; expected version is 3.13"
             exit 1
           }
           $pythonVersion
