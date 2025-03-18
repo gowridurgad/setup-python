@@ -25,6 +25,17 @@ class PipCache extends CacheDistributor {
     let stdout = '';
     let stderr = '';
 
+    // Ensure pip is installed and available
+    const pythonBinary = path.join(process.env['RUNNER_TEMP'] || '', 'python');
+    try {
+      // Install pip if it's not already installed
+      await exec.exec(`${pythonBinary} -m ensurepip`);
+      await exec.exec(`${pythonBinary} -m pip install --upgrade pip`);
+    } catch (error) {
+      core.error('Failed to install or upgrade pip.');
+      throw new Error('Could not ensure pip is installed or upgraded.');
+    }
+
     // Add temporary fix for Windows
     // On windows it is necessary to execute through an exec
     // because the getExecOutput gives a non zero code or writes to stderr for pip 22.0.2,
