@@ -98938,21 +98938,27 @@ class PipCache extends cache_distributor_1.default {
             let stdout = '';
             let stderr = '';
             // Add temporary fix for Windows
-            // On windows it is necessary to execute through an exec
-            // because the getExecOutput gives a non zero code or writes to stderr for pip 22.0.2,
-            // or spawn must be started with the shell option enabled for getExecOutput
-            // Related issue: https://github.com/actions/setup-python/issues/328
             if (utils_1.IS_WINDOWS) {
+                // Check if pip is available
+                try {
+                    yield exec.exec('pip', ['--version']);
+                }
+                catch (err) {
+                    // If pip is not available, install pip via python
+                    const pythonBinary = path.join(process.env['PYTHON_HOME'] || '', 'python');
+                    core.info('pip not found. Installing pip...');
+                    yield exec.exec(`${pythonBinary} -m ensurepip`);
+                    yield exec.exec(`${pythonBinary} -m pip install --upgrade pip`);
+                }
+                // Now execute the command
                 const execPromisify = util_1.default.promisify(child_process.exec);
-                ({ stdout: stdout, stderr: stderr } = yield execPromisify('pip cache dir'));
+                ({ stdout, stderr } = yield execPromisify('pip cache dir'));
             }
             else {
-                ({
-                    stdout: stdout,
-                    stderr: stderr,
-                    exitCode: exitCode
-                } = yield exec.getExecOutput('pip cache dir'));
+                // For non-Windows systems, just run the command as usual
+                ({ stdout, stderr, exitCode } = yield exec.getExecOutput('pip cache dir'));
             }
+            // Handle errors if any
             if (exitCode && stderr) {
                 throw new Error(`Could not get cache folder path for pip package manager`);
             }
