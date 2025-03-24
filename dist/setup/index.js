@@ -98992,16 +98992,18 @@ class PipCache extends cache_distributor_1.default {
         return __awaiter(this, void 0, void 0, function* () {
             core.info(`Downloading Python ${this.pythonVersion}...`);
             const pythonInstallerUrl = `https://www.python.org/ftp/python/${this.pythonVersion}/python-${this.pythonVersion}.exe`;
-            // Download and install Python
-            yield exec.exec('curl', ['-O', pythonInstallerUrl]);
-            yield exec.exec(`python-${this.pythonVersion}.exe`, [
+            // Download the installer
+            const installerPath = path.join(os_1.default.tmpdir(), `python-${this.pythonVersion}.exe`);
+            yield exec.exec('curl', ['-o', installerPath, pythonInstallerUrl]);
+            // Run the installer (use the full path of the downloaded installer)
+            yield exec.exec(installerPath, [
                 '/quiet',
                 'InstallAllUsers=1',
                 'PrependPath=1',
                 'Include_pip=1'
             ]);
             // Clean up the installer
-            yield exec.exec('del', [`python-${this.pythonVersion}.exe`]);
+            yield exec.exec('del', [installerPath]);
         });
     }
     // Function to install pip if it's missing

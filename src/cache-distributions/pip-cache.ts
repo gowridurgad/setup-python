@@ -89,9 +89,15 @@ class PipCache extends CacheDistributor {
     core.info(`Downloading Python ${this.pythonVersion}...`);
     const pythonInstallerUrl = `https://www.python.org/ftp/python/${this.pythonVersion}/python-${this.pythonVersion}.exe`;
 
-    // Download and install Python
-    await exec.exec('curl', ['-O', pythonInstallerUrl]);
-    await exec.exec(`python-${this.pythonVersion}.exe`, [
+    // Download the installer
+    const installerPath = path.join(
+      os.tmpdir(),
+      `python-${this.pythonVersion}.exe`
+    );
+    await exec.exec('curl', ['-o', installerPath, pythonInstallerUrl]);
+
+    // Run the installer (use the full path of the downloaded installer)
+    await exec.exec(installerPath, [
       '/quiet',
       'InstallAllUsers=1',
       'PrependPath=1',
@@ -99,7 +105,7 @@ class PipCache extends CacheDistributor {
     ]);
 
     // Clean up the installer
-    await exec.exec('del', [`python-${this.pythonVersion}.exe`]);
+    await exec.exec('del', [installerPath]);
   }
 
   // Function to install pip if it's missing
