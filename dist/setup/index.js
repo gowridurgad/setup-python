@@ -98942,26 +98942,37 @@ class PipCache extends cache_distributor_1.default {
             if (utils_1.IS_LINUX || utils_1.IS_MAC) {
                 pythonExecutable = 'python3'; // Use python3 on Linux/macOS
             }
-            // Add temporary fix for Windows
             if (utils_1.IS_WINDOWS) {
-                // Check if pip is available
+                // Check if Python is installed
+                try {
+                    yield exec.exec(`${pythonExecutable}`, ['--version']);
+                }
+                catch (err) {
+                    core.info(`Python not found. Installing Python ${this.pythonVersion}...`);
+                    yield this.installPython();
+                }
+                // Check if pip is installed
                 try {
                     yield exec.exec('pip', ['--version']);
                 }
                 catch (err) {
-                    // If pip is not available, install pip via python
                     core.info('pip not found. Installing pip...');
-                    // Ensure python is available
-                    const pythonBinary = yield this.getPythonExecutable(pythonExecutable);
-                    yield exec.exec(`${pythonBinary} -m ensurepip`);
-                    yield exec.exec(`${pythonBinary} -m pip install --upgrade pip`);
+                    yield this.installPip(pythonExecutable);
                 }
-                // Now execute the command
+                // Get pip cache directory
                 const execPromisify = util_1.default.promisify(child_process.exec);
                 ({ stdout, stderr } = yield execPromisify('pip cache dir'));
             }
             else {
-                // For non-Windows systems, just run the command as usual
+                // For non-Windows systems, check if pip is available
+                try {
+                    yield exec.getExecOutput('python -m pip --version');
+                }
+                catch (err) {
+                    core.info('pip not found. Installing pip...');
+                    yield this.installPip(pythonExecutable);
+                }
+                // Run the command to get pip cache dir
                 ({ stdout, stderr, exitCode } = yield exec.getExecOutput('pip cache dir'));
             }
             // Handle errors if any
@@ -98974,6 +98985,31 @@ class PipCache extends cache_distributor_1.default {
             }
             core.debug(`global cache directory path is ${resolvedPath}`);
             return [resolvedPath];
+        });
+    }
+    // Function to install Python if it's missing
+    installPython() {
+        return __awaiter(this, void 0, void 0, function* () {
+            core.info(`Downloading Python ${this.pythonVersion}...`);
+            const pythonInstallerUrl = `https://www.python.org/ftp/python/${this.pythonVersion}/python-${this.pythonVersion}.exe`;
+            // Download and install Python
+            yield exec.exec('curl', ['-O', pythonInstallerUrl]);
+            yield exec.exec(`python-${this.pythonVersion}.exe`, [
+                '/quiet',
+                'InstallAllUsers=1',
+                'PrependPath=1',
+                'Include_pip=1'
+            ]);
+            // Clean up the installer
+            yield exec.exec('del', [`python-${this.pythonVersion}.exe`]);
+        });
+    }
+    // Function to install pip if it's missing
+    installPip(pythonExecutable) {
+        return __awaiter(this, void 0, void 0, function* () {
+            core.info('Installing pip using ensurepip...');
+            yield exec.exec(`${pythonExecutable} -m ensurepip`);
+            yield exec.exec(`${pythonExecutable} -m pip install --upgrade pip`);
         });
     }
     // Function to get the correct Python executable based on platform

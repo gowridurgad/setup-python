@@ -31,26 +31,38 @@ class PipCache extends CacheDistributor {
       pythonExecutable = 'python3'; // Use python3 on Linux/macOS
     }
 
-    // Add temporary fix for Windows
     if (IS_WINDOWS) {
-      // Check if pip is available
+      // Check if Python is installed
+      try {
+        await exec.exec(`${pythonExecutable}`, ['--version']);
+      } catch (err) {
+        core.info(
+          `Python not found. Installing Python ${this.pythonVersion}...`
+        );
+        await this.installPython();
+      }
+
+      // Check if pip is installed
       try {
         await exec.exec('pip', ['--version']);
       } catch (err) {
-        // If pip is not available, install pip via python
         core.info('pip not found. Installing pip...');
-
-        // Ensure python is available
-        const pythonBinary = await this.getPythonExecutable(pythonExecutable);
-        await exec.exec(`${pythonBinary} -m ensurepip`);
-        await exec.exec(`${pythonBinary} -m pip install --upgrade pip`);
+        await this.installPip(pythonExecutable);
       }
 
-      // Now execute the command
+      // Get pip cache directory
       const execPromisify = utils.promisify(child_process.exec);
       ({stdout, stderr} = await execPromisify('pip cache dir'));
     } else {
-      // For non-Windows systems, just run the command as usual
+      // For non-Windows systems, check if pip is available
+      try {
+        await exec.getExecOutput('python -m pip --version');
+      } catch (err) {
+        core.info('pip not found. Installing pip...');
+        await this.installPip(pythonExecutable);
+      }
+
+      // Run the command to get pip cache dir
       ({stdout, stderr, exitCode} = await exec.getExecOutput('pip cache dir'));
     }
 
@@ -70,6 +82,31 @@ class PipCache extends CacheDistributor {
     core.debug(`global cache directory path is ${resolvedPath}`);
 
     return [resolvedPath];
+  }
+
+  // Function to install Python if it's missing
+  private async installPython() {
+    core.info(`Downloading Python ${this.pythonVersion}...`);
+    const pythonInstallerUrl = `https://www.python.org/ftp/python/${this.pythonVersion}/python-${this.pythonVersion}.exe`;
+
+    // Download and install Python
+    await exec.exec('curl', ['-O', pythonInstallerUrl]);
+    await exec.exec(`python-${this.pythonVersion}.exe`, [
+      '/quiet',
+      'InstallAllUsers=1',
+      'PrependPath=1',
+      'Include_pip=1'
+    ]);
+
+    // Clean up the installer
+    await exec.exec('del', [`python-${this.pythonVersion}.exe`]);
+  }
+
+  // Function to install pip if it's missing
+  private async installPip(pythonExecutable: string) {
+    core.info('Installing pip using ensurepip...');
+    await exec.exec(`${pythonExecutable} -m ensurepip`);
+    await exec.exec(`${pythonExecutable} -m pip install --upgrade pip`);
   }
 
   // Function to get the correct Python executable based on platform
