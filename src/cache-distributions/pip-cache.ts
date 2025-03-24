@@ -7,7 +7,7 @@ import * as path from 'path';
 import os from 'os';
 
 import CacheDistributor from './cache-distributor';
-import {getLinuxInfo, IS_LINUX, IS_WINDOWS} from '../utils';
+import {getLinuxInfo, IS_LINUX, IS_MAC, IS_WINDOWS} from '../utils';
 import {CACHE_DEPENDENCY_BACKUP_PATH} from './constants';
 
 class PipCache extends CacheDistributor {
@@ -25,6 +25,12 @@ class PipCache extends CacheDistributor {
     let stdout = '';
     let stderr = '';
 
+    // Define the Python executable based on the platform
+    let pythonExecutable = 'python'; // Default Python command for Windows
+    if (IS_LINUX || IS_MAC) {
+      pythonExecutable = 'python3'; // Use python3 on Linux/macOS
+    }
+
     // Add temporary fix for Windows
     if (IS_WINDOWS) {
       // Check if pip is available
@@ -32,11 +38,10 @@ class PipCache extends CacheDistributor {
         await exec.exec('pip', ['--version']);
       } catch (err) {
         // If pip is not available, install pip via python
-        const pythonBinary = path.join(
-          process.env['PYTHON_HOME'] || '',
-          'python'
-        );
         core.info('pip not found. Installing pip...');
+
+        // Ensure python is available
+        const pythonBinary = await this.getPythonExecutable(pythonExecutable);
         await exec.exec(`${pythonBinary} -m ensurepip`);
         await exec.exec(`${pythonBinary} -m pip install --upgrade pip`);
       }
@@ -65,6 +70,29 @@ class PipCache extends CacheDistributor {
     core.debug(`global cache directory path is ${resolvedPath}`);
 
     return [resolvedPath];
+  }
+
+  // Function to get the correct Python executable based on platform
+  private async getPythonExecutable(pythonExecutable: string) {
+    let pythonPath = '';
+    try {
+      // Try running the python command to find the correct executable
+      const {stdout} = await exec.getExecOutput(
+        `${pythonExecutable} --version`
+      );
+      pythonPath = path.join(
+        process.env['PYTHON_HOME'] || '',
+        pythonExecutable
+      );
+      core.debug(`Using Python executable at: ${pythonPath}`);
+    } catch (err) {
+      core.error(
+        `Python executable not found for ${pythonExecutable}. Please ensure Python is installed.`
+      );
+      throw err; // Rethrow the error
+    }
+
+    return pythonPath;
   }
 
   protected async computeKeys() {
