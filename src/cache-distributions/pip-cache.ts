@@ -20,22 +20,25 @@ class PipCache extends CacheDistributor {
     super('pip', cacheDependencyPath);
   }
 
-  // Utility function to safely get the value of `update-environment`
-  private getUpdateEnvironment(): boolean {
-    try {
-      return core.getBooleanInput('update-environment');
-    } catch (error) {
-      core.warning(
-        `'update-environment' input is invalid or missing. Defaulting to 'false'.`
-      );
-      return false;
-    }
-  }
-
   protected async getCacheGlobalDirectories() {
     let exitCode = 1;
     let stdout = '';
     let stderr = '';
+
+    // Check if update-environment is false
+    // Check if update-environment is false and pip is not available
+    const updateEnvironment = core.getBooleanInput('update-environment');
+    if (!updateEnvironment) {
+      try {
+        // Check if pip is available
+        await exec.getExecOutput('pip --version');
+      } catch (error) {
+        core.error(
+          `'update-environment' is set to false and 'pip' is not available. Please ensure Python and pip are installed and available in the PATH before proceeding.`
+        );
+        return [];
+      }
+    }
 
     // Add temporary fix for Windows
     // On windows it is necessary to execute through an exec
