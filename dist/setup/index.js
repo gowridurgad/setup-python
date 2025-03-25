@@ -98937,6 +98937,12 @@ class PipCache extends cache_distributor_1.default {
             let exitCode = 1;
             let stdout = '';
             let stderr = '';
+            // Check if update-environment is false
+            const updateEnvironment = core.getBooleanInput('update-environment');
+            if (!updateEnvironment) {
+                core.error(`'update-environment' is set to false. Please ensure Python and pip are installed and available in the PATH before proceeding.`);
+                return [];
+            }
             // Add temporary fix for Windows
             // On windows it is necessary to execute through an exec
             // because the getExecOutput gives a non zero code or writes to stderr for pip 22.0.2,
