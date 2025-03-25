@@ -26,12 +26,18 @@ class PipCache extends CacheDistributor {
     let stderr = '';
 
     // Check if update-environment is false
+    // Check if update-environment is false and pip is not available
     const updateEnvironment = core.getBooleanInput('update-environment');
     if (!updateEnvironment) {
-      core.error(
-        `'update-environment' is set to false. Please ensure Python and pip are installed and available in the PATH before proceeding.`
-      );
-      return [];
+      try {
+        // Check if pip is available
+        await exec.getExecOutput('pip --version');
+      } catch (error) {
+        core.error(
+          `'update-environment' is set to false and 'pip' is not available. Please ensure Python and pip are installed and available in the PATH before proceeding.`
+        );
+        return [];
+      }
     }
 
     // Add temporary fix for Windows
