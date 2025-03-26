@@ -98946,7 +98946,7 @@ class PipCache extends cache_distributor_1.default {
                     yield exec.getExecOutput('pip --version');
                 }
                 catch (error) {
-                    core.error(`'update-environment' is set to false and 'pip' is not available. Please ensure Python and pip are installed and available in the PATH before proceeding.`);
+                    core.error(`'update-environment' is set to false, so the environment will not be updated. Please ensure that all required tools, including 'pip', are pre-installed and available in the PATH of the self-hosted runner.`);
                     return [];
                 }
             }
