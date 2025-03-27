@@ -98937,9 +98937,9 @@ class PipCache extends cache_distributor_1.default {
             let exitCode = 1;
             let stdout = '';
             let stderr = '';
-            // Check if update-environment is false
             // Check if update-environment is false and pip is not available
-            const updateEnvironment = core.getBooleanInput('update-environment');
+            const updateEnvironmentInput = core.getInput('update-environment', { required: false }) || 'true';
+            const updateEnvironment = updateEnvironmentInput.toLowerCase() === 'true';
             if (!updateEnvironment) {
                 try {
                     // Check if pip is available
