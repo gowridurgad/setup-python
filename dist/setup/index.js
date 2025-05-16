@@ -100310,16 +100310,22 @@ function installCpythonFromRelease(release) {
             }
             core.info('Execute installation script');
             yield installPython(pythonExtractedFolder);
-            // Add logic to handle pip-version input
-            const pipVersion = core.getInput('pip-version'); // Get the pip-version input
+            //pip-version
+            const pipVersion = core.getInput('pip-version');
             if (pipVersion) {
-                core.warning(`Installing user-specified pip version: ${pipVersion}. Note: Using an older version of pip may expose you to potential issues such as missing features, security vulnerabilities, or incompatibilities.`);
-                // Determine the Python executable path based on the OS
-                const pythonExecutable = utils_1.IS_WINDOWS
-                    ? path.join(pythonExtractedFolder, 'python.exe') // Windows
-                    : path.join(pythonExtractedFolder, 'bin', 'python'); // Linux/MacOS
-                // Install the specified pip version
-                yield exec.exec(`${pythonExecutable} -m pip install pip==${pipVersion}`);
+                core.warning(`You have specified pip@${pipVersion}. Using an older version of pip may expose your workflow to missing features or security issues.`);
+                try {
+                    yield exec.exec('python', [
+                        '-m',
+                        'pip',
+                        'install',
+                        `pip==${pipVersion}`
+                    ]);
+                    core.info(`Successfully installed pip@${pipVersion}`);
+                }
+                catch (err) {
+                    core.setFailed(`Failed to install pip@${pipVersion}: ${err.message}`);
+                }
             }
         }
         catch (err) {
