@@ -36,6 +36,10 @@ outputs:
     description: "A boolean value to indicate a cache entry was found"
   python-path:
     description: "The absolute path to the Python or PyPy executable."
+  pip-version:
+    description: 'The version of pip to install. Leave empty to use the latest version.'
+    required: false
+    default: ''
 runs:
   using: 'node20'
   main: 'dist/setup/index.js'

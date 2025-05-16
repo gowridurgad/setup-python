@@ -110,6 +110,20 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
 
     core.info('Execute installation script');
     await installPython(pythonExtractedFolder);
+    // Add logic to handle pip-version input
+    const pipVersion = core.getInput('pip-version'); // Get the pip-version input
+    if (pipVersion) {
+      core.warning(
+        `Installing user-specified pip version: ${pipVersion}. Note: Using an older version of pip may expose you to potential issues such as missing features, security vulnerabilities, or incompatibilities.`
+      );
+      await exec.exec(
+        `${path.join(
+          pythonExtractedFolder,
+          'bin',
+          'python'
+        )} -m pip install pip==${pipVersion}`
+      );
+    }
   } catch (err) {
     if (err instanceof tc.HTTPError) {
       // Rate limit?
