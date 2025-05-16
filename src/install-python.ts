@@ -116,13 +116,12 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
       core.warning(
         `Installing user-specified pip version: ${pipVersion}. Note: Using an older version of pip may expose you to potential issues such as missing features, security vulnerabilities, or incompatibilities.`
       );
-      await exec.exec(
-        `${path.join(
-          pythonExtractedFolder,
-          'bin',
-          'python'
-        )} -m pip install pip==${pipVersion}`
-      );
+      // Determine the Python executable path based on the OS
+      const pythonExecutable = IS_WINDOWS
+        ? path.join(pythonExtractedFolder, 'python.exe') // Windows
+        : path.join(pythonExtractedFolder, 'bin', 'python'); // Linux/MacOS
+      // Install the specified pip version
+      await exec.exec(`${pythonExecutable} -m pip install pip==${pipVersion}`);
     }
   } catch (err) {
     if (err instanceof tc.HTTPError) {
