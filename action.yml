@@ -29,6 +29,9 @@ inputs:
   freethreaded:
     description: "When 'true', use the freethreaded version of Python."
     default: false
+  pip-version:
+    description: "Version of pip to install. If not specified, the latest version will be installed."
+    required: false
 outputs:
   python-version:
     description: "The installed Python or PyPy version. Useful when given a version range as input."
@@ -36,9 +39,7 @@ outputs:
     description: "A boolean value to indicate a cache entry was found"
   python-path:
     description: "The absolute path to the Python or PyPy executable."
-  pip-version:
-    description: "Version of pip to install. If not specified, the latest version will be installed."
-    required: false
+  
 runs:
   using: 'node20'
   main: 'dist/setup/index.js'
