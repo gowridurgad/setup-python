@@ -100381,6 +100381,7 @@ const finderGraalPy = __importStar(__nccwpck_require__(1663));
 const path = __importStar(__nccwpck_require__(6928));
 const os = __importStar(__nccwpck_require__(857));
 const fs_1 = __importDefault(__nccwpck_require__(9896));
+const exec = __importStar(__nccwpck_require__(5236));
 const cache_factory_1 = __nccwpck_require__(665);
 const utils_1 = __nccwpck_require__(1798);
 function isPyPyVersion(versionSpec) {
@@ -100432,6 +100433,15 @@ function resolveVersionInput() {
     }
     return versions;
 }
+function installPip() {
+    return __awaiter(this, void 0, void 0, function* () {
+        const pipVersion = core.getInput('pip-version');
+        if (pipVersion) {
+            core.info(`pip-version input is specified, Installing pip version ${pipVersion}`);
+            yield exec.exec(`python -m pip install --upgrade pip==${pipVersion}`);
+        }
+    });
+}
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
@@ -100469,6 +100479,7 @@ function run() {
                         }
                         const installed = yield finder.useCpythonVersion(version, arch, updateEnvironment, checkLatest, allowPreReleases, freethreaded);
                         pythonVersion = installed.version;
+                        yield installPip();
                         core.info(`Successfully set up ${installed.impl} (${pythonVersion})`);
                     }
                 }
