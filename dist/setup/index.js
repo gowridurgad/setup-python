@@ -100438,7 +100438,6 @@ function installPip() {
         const pipVersion = core.getInput('pip-version');
         if (pipVersion) {
             core.info(`pip-version input is specified, Installing pip version ${pipVersion}`);
-            core.warning(`You have specified pip@${pipVersion}. Using an older version of pip may expose your workflow to missing features or security issues.`);
             yield exec.exec(`python -m pip install --upgrade pip==${pipVersion}`);
         }
     });
