@@ -100437,6 +100437,11 @@ function installPip() {
     return __awaiter(this, void 0, void 0, function* () {
         const pipVersion = core.getInput('pip-version');
         if (pipVersion) {
+            // Validate pip-version format (major.minor.patch)
+            const versionRegex = /^\d+(\.\d+)?(\.\d+)?$/; // Regex for major, major.minor, or major.minor.patch format
+            if (!versionRegex.test(pipVersion)) {
+                throw new Error(`Invalid pip-version format: "${pipVersion}". Please specify the version in "major.minor.patch" format (e.g., "23.0.1").`);
+            }
             core.info(`pip-version input is specified, Installing pip version ${pipVersion}`);
             yield exec.exec(`python -m pip install --upgrade pip==${pipVersion}`);
         }
