@@ -84,7 +84,7 @@ async function installPip() {
     const versionRegex = /^\d+(\.\d+)?(\.\d+)?$/; // Regex for major, major.minor, or major.minor.patch format
     if (!versionRegex.test(pipVersion)) {
       throw new Error(
-        `Invalid pip-version format: "${pipVersion}". Please specify the version in "major.minor.patch" format (e.g., "23.0.1").`
+        `Invalid pip-version format: "${pipVersion}". Please specify the version in one of the supported formats: "major" (e.g., "23"), "major.minor" (e.g., "23.0"), or "major.minor.patch" (e.g., "23.0.1").`
       );
     }
     core.info(
