@@ -13,6 +13,7 @@ import {
   getVersionInputFromFile,
   getVersionsInputFromPlainFile
 } from './utils';
+import {exec} from '@actions/exec';
 
 function isPyPyVersion(versionSpec: string) {
   return versionSpec.startsWith('pypy');
@@ -20,6 +21,31 @@ function isPyPyVersion(versionSpec: string) {
 
 function isGraalPyVersion(versionSpec: string) {
   return versionSpec.startsWith('graalpy');
+}
+
+async function installPipPackages() {
+  const pipInstall = core.getInput('pip-install');
+  if (!pipInstall) {
+    return;
+  }
+
+  core.info(`Installing pip packages: ${pipInstall}`);
+
+  try {
+    // First upgrade pip
+    await exec('python', ['-m', 'pip', 'install', '--upgrade', 'pip']);
+
+    // Parse pip-install input - could be requirements file or package names
+    const installArgs = pipInstall.trim().split(/\s+/);
+
+    // Install the specified packages
+    await exec('python', ['-m', 'pip', 'install', ...installArgs]);
+
+    core.info('Successfully installed pip packages');
+  } catch (error) {
+    core.setFailed(`Failed to install pip packages: ${error}`);
+    throw error;
+  }
 }
 
 export async function cacheDependencies(cache: string, pythonVersion: string) {
@@ -194,6 +220,7 @@ async function run() {
       if (cache && isCacheFeatureAvailable()) {
         await cacheDependencies(cache, pythonVersion);
       }
+      await installPipPackages();
     } else {
       core.warning(
         'The `python-version` input is not set.  The version of Python currently in `PATH` will be used.'
