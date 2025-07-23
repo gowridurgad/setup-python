@@ -32,9 +32,6 @@ async function installPipPackages() {
   core.info(`Installing pip packages: ${pipInstall}`);
 
   try {
-    // // First upgrade pip
-    // await exec('python', ['-m', 'pip', 'install', '--upgrade', 'pip']);
-
     // Parse pip-install input - could be requirements file or package names
     const installArgs = pipInstall.trim().split(/\s+/);
 
