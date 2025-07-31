@@ -97967,9 +97967,7 @@ function installPipPackages() {
             core.info('Successfully installed pip packages');
         }
         catch (error) {
-            core.setFailed(`Failed to install pip packages: "${pipInstall}". 
-      Verify the package names, requirements file, or network connectivity. 
-      Error details: ${error}`);
+            core.setFailed(`Failed to install pip packages: "${pipInstall}". Verify the package names, requirements file, or network connectivity. ${error}`);
         }
     });
 }
