@@ -676,7 +676,7 @@ The version of Pip should be specified in the format `major`, `major.minor`, or 
 
 ## Using the pip-install input
 
-The `pip-install` input allows you to install dependencies as part of the Python setup step using pip install input.
+The `pip-install` input allows you to install dependencies as part of the Python setup step.
 
 
 ```yaml
