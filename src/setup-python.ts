@@ -32,20 +32,12 @@ async function installPipPackages() {
   core.info(`Installing pip packages: ${pipInstall}`);
 
   try {
-    // Parse pip-install input - could be requirements file or package names
     const installArgs = pipInstall.trim().split(/\s+/);
-
-    // Install the specified packages
     await exec('python', ['-m', 'pip', 'install', ...installArgs]);
-
     core.info('Successfully installed pip packages');
   } catch (error) {
     core.setFailed(
-      `Failed to install pip packages from "${pipInstall}". 
-      Please verify:
-      - The package names and versions in the requirements file are correct.
-      - The specified packages and versions can be resolved from PyPI or the configured package index.
-      - Your network connection is stable and allows access to the package index.`
+      `Failed to install pip packages from "${pipInstall}". Please verify that the package names and versions in the requirements file are correct, that the specified packages and versions can be resolved from PyPI or the configured package index, and that your network connection is stable and allows access to the package index.`
     );
   }
 }
