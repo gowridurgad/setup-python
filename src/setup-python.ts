@@ -25,16 +25,12 @@ function isGraalPyVersion(versionSpec: string) {
 
 async function installPipPackages() {
   const pipInstall = core.getInput('pip-install');
+
   if (!pipInstall) {
     return;
   }
-  if (pipInstall.trim() === '') {
-    core.setFailed(
-      'The "pip-install" input is empty. Please provide a valid input, such as package names or a requirements file.'
-    );
-    return;
-  }
   core.info(`Installing pip packages: ${pipInstall}`);
+
   try {
     const installArgs = pipInstall.trim().split(/\s+/);
     await exec('python', ['-m', 'pip', 'install', ...installArgs]);
