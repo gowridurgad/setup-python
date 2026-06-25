@@ -54588,6 +54588,7 @@ exports.desugarVersion = desugarVersion;
 exports.pythonVersionToSemantic = pythonVersionToSemantic;
 const os = __importStar(__nccwpck_require__(70857));
 const path = __importStar(__nccwpck_require__(16928));
+const fs = __importStar(__nccwpck_require__(79896));
 const utils_1 = __nccwpck_require__(71798);
 const semver = __importStar(__nccwpck_require__(62088));
 const installer = __importStar(__nccwpck_require__(41919));
@@ -54640,6 +54641,21 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         core.debug(`Using freethreaded version of ${semanticVersionSpec}`);
         architecture += '-freethreaded';
     }
+    // On Linux, append an OS-version suffix (e.g. '-ubuntu-24.04') to the
+    // *version* segment of the tool-cache path so that Python installations
+    // cached for different OS versions on the same self-hosted runner do not
+    // conflict. For example:
+    //   <tool-cache>/Python/3.8.18/x64
+    // becomes
+    //   <tool-cache>/Python/3.8.18-ubuntu-24.04/x64
+    // The downloaded Python tarball is OS-specific (linked against a particular
+    // glibc / OpenSSL), so reusing a cached install across OS versions can
+    // break the interpreter.
+    // See https://github.com/actions/setup-python/issues/1087.
+    const osVersionSuffix = await (0, utils_1.getLinuxToolCacheSuffix)();
+    if (osVersionSuffix) {
+        core.debug(`Using OS-isolated tool-cache path '<tool-cache>/Python/<version>${osVersionSuffix}/<arch>'.`);
+    }
     if (checkLatest) {
         manifest = await installer.getManifest();
         const resolvedVersion = (await installer.findReleaseFromManifest(semanticVersionSpec, architecture, manifest))?.version;
@@ -54651,14 +54667,25 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
             core.info(`Failed to resolve version ${semanticVersionSpec} from manifest`);
         }
     }
-    let installDir = tc.find('Python', semanticVersionSpec, architecture);
+    let installDir = osVersionSuffix
+        ? findIsolatedCpythonInstall(semanticVersionSpec, architecture, osVersionSuffix)
+        : tc.find('Python', semanticVersionSpec, architecture);
     if (!installDir) {
         core.info(`Version ${semanticVersionSpec} was not found in the local cache`);
         const foundRelease = await installer.findReleaseFromManifest(semanticVersionSpec, architecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             core.info(`Version ${semanticVersionSpec} is available for downloading`);
             await installer.installCpythonFromRelease(foundRelease);
-            installDir = tc.find('Python', semanticVersionSpec, architecture);
+            if (osVersionSuffix) {
+                // The python-versions install script writes to
+                // <tool-cache>/Python/<exactVersion>/<arch>; move it to the
+                // OS-isolated path before looking it up.
+                renameInstallToIsolatedPath(foundRelease.version, architecture, osVersionSuffix);
+                installDir = findIsolatedCpythonInstall(semanticVersionSpec, architecture, osVersionSuffix);
+            }
+            else {
+                installDir = tc.find('Python', semanticVersionSpec, architecture);
+            }
         }
     }
     if (!installDir) {
@@ -54775,6 +54802,118 @@ function versionFromPath(installDir) {
     const parts = installDir.split(path.sep);
     const idx = parts.findIndex(part => part === 'PyPy' || part === 'Python');
     return parts[idx + 1] || '';
+}
+/**
+ * Resolve the tool-cache root the same way `tc.find` does.
+ * Returns `null` if neither environment variable is set so callers can fall
+ * back to the default tool-cache lookup.
+ */
+function getToolCacheRoot() {
+    return (process.env['RUNNER_TOOL_CACHE'] ||
+        process.env['AGENT_TOOLSDIRECTORY'] ||
+        null);
+}
+/**
+ * Look up a previously installed Python in the OS-isolated tool-cache path
+ * `<tool-cache>/Python/<exactVersion><osSuffix>/<arch>`.
+ *
+ * This mirrors `tc.find()` semantics (the install is considered present only
+ * when a sibling `.complete` marker file exists) but scans the version
+ * directories itself because `tc.find()` always treats the version segment as
+ * the bare semver and would never look at the suffixed directories.
+ *
+ * Returns the resolved install directory or an empty string if no compatible
+ * version is installed.
+ */
+function findIsolatedCpythonInstall(semanticVersionSpec, architecture, osVersionSuffix) {
+    const toolCacheRoot = getToolCacheRoot();
+    if (!toolCacheRoot) {
+        return '';
+    }
+    const pythonRoot = path.join(toolCacheRoot, 'Python');
+    if (!fs.existsSync(pythonRoot)) {
+        return '';
+    }
+    let entries;
+    try {
+        entries = fs.readdirSync(pythonRoot);
+    }
+    catch (err) {
+        core.debug(`Unable to enumerate '${pythonRoot}' for OS-isolated lookup: ${err.message}`);
+        return '';
+    }
+    // Only consider directories whose name ends with our OS suffix. Strip the
+    // suffix to get the exact installed Python version and match it against the
+    // requested semver range.
+    const candidates = entries
+        .filter(name => name.endsWith(osVersionSuffix))
+        .map(name => ({
+        exactVersion: name.slice(0, name.length - osVersionSuffix.length),
+        dirName: name
+    }))
+        .filter(({ exactVersion }) => semver.valid(exactVersion))
+        .filter(({ exactVersion }) => semver.satisfies(exactVersion, semanticVersionSpec, {
+        includePrerelease: true
+    }))
+        .sort((a, b) => semver.rcompare(a.exactVersion, b.exactVersion));
+    for (const { dirName } of candidates) {
+        const installDir = path.join(pythonRoot, dirName, architecture);
+        const marker = `${path.join(pythonRoot, dirName, architecture)}.complete`;
+        if (fs.existsSync(installDir) && fs.existsSync(marker)) {
+            return installDir;
+        }
+    }
+    return '';
+}
+/**
+ * Move a freshly installed Python directory from the default tool-cache path
+ *   <tool-cache>/Python/<exactVersion>/<arch>
+ * to the OS-isolated path
+ *   <tool-cache>/Python/<exactVersion><osSuffix>/<arch>
+ * along with its sibling `.complete` marker file.
+ *
+ * The python-versions install script writes to the unsuffixed path because the
+ * target directory layout is hard-coded in the upstream setup script and
+ * cannot be overridden via env var. Renaming after install is the simplest
+ * way to get the OS-isolated layout without forking the install script.
+ *
+ * No-op if the source path does not exist (the install script may have failed
+ * before producing it) or if the destination already exists.
+ */
+function renameInstallToIsolatedPath(exactVersion, architecture, osVersionSuffix) {
+    const toolCacheRoot = getToolCacheRoot();
+    if (!toolCacheRoot) {
+        core.debug('RUNNER_TOOL_CACHE is not set; skipping OS-isolated tool-cache rename.');
+        return;
+    }
+    const pythonRoot = path.join(toolCacheRoot, 'Python');
+    const sourceVersionDir = path.join(pythonRoot, exactVersion);
+    const targetVersionDir = path.join(pythonRoot, `${exactVersion}${osVersionSuffix}`);
+    if (!fs.existsSync(sourceVersionDir)) {
+        core.debug(`OS-isolated rename: source path '${sourceVersionDir}' does not exist; nothing to move.`);
+        return;
+    }
+    if (fs.existsSync(targetVersionDir)) {
+        core.debug(`OS-isolated rename: target path '${targetVersionDir}' already exists; leaving install scripts' output in place.`);
+        return;
+    }
+    try {
+        fs.renameSync(sourceVersionDir, targetVersionDir);
+        // Move any sibling architecture-level `.complete` markers
+        // (e.g. `<version>/x64.complete`) which were renamed implicitly with the
+        // directory move above — they live inside the renamed dir so no extra
+        // work is needed for them. But python-versions historically also writes
+        // a top-level `<version>.complete` marker; move it if present.
+        const sourceMarker = `${sourceVersionDir}.complete`;
+        const targetMarker = `${targetVersionDir}.complete`;
+        if (fs.existsSync(sourceMarker) && !fs.existsSync(targetMarker)) {
+            fs.renameSync(sourceMarker, targetMarker);
+        }
+        core.info(`Moved Python install to OS-isolated tool-cache path '${targetVersionDir}/${architecture}'.`);
+    }
+    catch (err) {
+        core.warning(`Failed to move Python install to OS-isolated tool-cache path '${targetVersionDir}': ${err.message}`);
+    }
 }
 /**
  * Python's prelease versions look like `3.7.0b2`.
@@ -55708,6 +55847,7 @@ exports.isCacheFeatureAvailable = isCacheFeatureAvailable;
 exports.logWarning = logWarning;
 exports.getLinuxInfo = getLinuxInfo;
 exports.getOSInfo = getOSInfo;
+exports.getLinuxToolCacheSuffix = getLinuxToolCacheSuffix;
 exports.getVersionInputFromTomlFile = getVersionInputFromTomlFile;
 exports.getVersionsInputFromPlainFile = getVersionsInputFromPlainFile;
 exports.getVersionInputFromToolVersions = getVersionInputFromToolVersions;
@@ -55864,6 +56004,32 @@ async function getOSInfo() {
     }
     finally {
         return osInfo;
+    }
+}
+/**
+ * Build a filesystem-safe OS suffix for tool-cache directories on Linux,
+ * e.g. '-ubuntu-24.04'. Returns an empty string on non-Linux platforms or
+ * if the OS info cannot be determined.
+ *
+ * Used to isolate cached Python installations per-OS on self-hosted runners
+ * that serve jobs running in containers based on different OS versions.
+ * See https://github.com/actions/setup-python/issues/1087.
+ */
+async function getLinuxToolCacheSuffix() {
+    if (!exports.IS_LINUX) {
+        return '';
+    }
+    try {
+        const { osName, osVersion } = await getLinuxInfo();
+        if (!osName || !osVersion) {
+            return '';
+        }
+        const sanitize = (value) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+        return `-${sanitize(osName)}-${sanitize(osVersion)}`;
+    }
+    catch (err) {
+        core.debug(`Unable to determine Linux OS info for tool-cache isolation: ${err.message}`);
+        return '';
     }
 }
 /**
