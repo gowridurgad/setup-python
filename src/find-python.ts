@@ -85,16 +85,17 @@ export async function useCpythonVersion(
     architecture += '-freethreaded';
   }
 
-  // On Linux, append an OS-version suffix (e.g. '-ubuntu-24.04') to the
+  // On Linux, append an OS-version suffix (e.g. '-linux-24.04') to the
   // *version* segment of the tool-cache path so that Python installations
   // cached for different OS versions on the same self-hosted runner do not
   // conflict. For example:
   //   <tool-cache>/Python/3.8.18/x64
   // becomes
-  //   <tool-cache>/Python/3.8.18-ubuntu-24.04/x64
-  // The downloaded Python tarball is OS-specific (linked against a particular
-  // glibc / OpenSSL), so reusing a cached install across OS versions can
-  // break the interpreter.
+  //   <tool-cache>/Python/3.8.18-linux-24.04/x64
+  // The suffix mirrors the python-versions download URL format
+  // (e.g. `python-3.8.18-linux-24.04-x64.tar.gz`). The downloaded tarball is
+  // OS-specific (linked against a particular glibc / OpenSSL), so reusing a
+  // cached install across OS versions can break the interpreter.
   // See https://github.com/actions/setup-python/issues/1087.
   const osVersionSuffix = await getLinuxToolCacheSuffix();
   if (osVersionSuffix) {

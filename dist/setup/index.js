@@ -54641,16 +54641,17 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         core.debug(`Using freethreaded version of ${semanticVersionSpec}`);
         architecture += '-freethreaded';
     }
-    // On Linux, append an OS-version suffix (e.g. '-ubuntu-24.04') to the
+    // On Linux, append an OS-version suffix (e.g. '-linux-24.04') to the
     // *version* segment of the tool-cache path so that Python installations
     // cached for different OS versions on the same self-hosted runner do not
     // conflict. For example:
     //   <tool-cache>/Python/3.8.18/x64
     // becomes
-    //   <tool-cache>/Python/3.8.18-ubuntu-24.04/x64
-    // The downloaded Python tarball is OS-specific (linked against a particular
-    // glibc / OpenSSL), so reusing a cached install across OS versions can
-    // break the interpreter.
+    //   <tool-cache>/Python/3.8.18-linux-24.04/x64
+    // The suffix mirrors the python-versions download URL format
+    // (e.g. `python-3.8.18-linux-24.04-x64.tar.gz`). The downloaded tarball is
+    // OS-specific (linked against a particular glibc / OpenSSL), so reusing a
+    // cached install across OS versions can break the interpreter.
     // See https://github.com/actions/setup-python/issues/1087.
     const osVersionSuffix = await (0, utils_1.getLinuxToolCacheSuffix)();
     if (osVersionSuffix) {
@@ -56008,24 +56009,27 @@ async function getOSInfo() {
 }
 /**
  * Build a filesystem-safe OS suffix for tool-cache directories on Linux,
- * e.g. '-ubuntu-24.04'. Returns an empty string on non-Linux platforms or
+ * e.g. '-linux-24.04'. Returns an empty string on non-Linux platforms or
  * if the OS info cannot be determined.
+ *
+ * The suffix format mirrors the python-versions download URL format
+ * (e.g. `python-3.8.18-linux-24.04-x64.tar.gz`), which is the proposal from
+ * https://github.com/actions/setup-python/issues/1087.
  *
  * Used to isolate cached Python installations per-OS on self-hosted runners
  * that serve jobs running in containers based on different OS versions.
- * See https://github.com/actions/setup-python/issues/1087.
  */
 async function getLinuxToolCacheSuffix() {
     if (!exports.IS_LINUX) {
         return '';
     }
     try {
-        const { osName, osVersion } = await getLinuxInfo();
-        if (!osName || !osVersion) {
+        const { osVersion } = await getLinuxInfo();
+        if (!osVersion) {
             return '';
         }
         const sanitize = (value) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
-        return `-${sanitize(osName)}-${sanitize(osVersion)}`;
+        return `-linux-${sanitize(osVersion)}`;
     }
     catch (err) {
         core.debug(`Unable to determine Linux OS info for tool-cache isolation: ${err.message}`);

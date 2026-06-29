@@ -227,25 +227,28 @@ export async function getOSInfo() {
 
 /**
  * Build a filesystem-safe OS suffix for tool-cache directories on Linux,
- * e.g. '-ubuntu-24.04'. Returns an empty string on non-Linux platforms or
+ * e.g. '-linux-24.04'. Returns an empty string on non-Linux platforms or
  * if the OS info cannot be determined.
+ *
+ * The suffix format mirrors the python-versions download URL format
+ * (e.g. `python-3.8.18-linux-24.04-x64.tar.gz`), which is the proposal from
+ * https://github.com/actions/setup-python/issues/1087.
  *
  * Used to isolate cached Python installations per-OS on self-hosted runners
  * that serve jobs running in containers based on different OS versions.
- * See https://github.com/actions/setup-python/issues/1087.
  */
 export async function getLinuxToolCacheSuffix(): Promise<string> {
   if (!IS_LINUX) {
     return '';
   }
   try {
-    const {osName, osVersion} = await getLinuxInfo();
-    if (!osName || !osVersion) {
+    const {osVersion} = await getLinuxInfo();
+    if (!osVersion) {
       return '';
     }
     const sanitize = (value: string) =>
       value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
-    return `-${sanitize(osName)}-${sanitize(osVersion)}`;
+    return `-linux-${sanitize(osVersion)}`;
   } catch (err) {
     core.debug(
       `Unable to determine Linux OS info for tool-cache isolation: ${
