@@ -19,10 +19,24 @@ const tempDir = path.join(
 process.env['RUNNER_TOOL_CACHE'] = toolDir;
 process.env['RUNNER_TEMP'] = tempDir;
 
+// Suppress the OS-isolated tool-cache suffix (see issue #1087) so that the
+// existing tests, which write fixtures to `Python/<version>/<arch>`,
+// continue to be found by `tc.find` on Linux test runners. The dedicated
+// tests below override these mocks to verify the suffix behavior.
+jest.mock('../src/utils', () => {
+  const actual = jest.requireActual('../src/utils');
+  return {
+    ...actual,
+    getLinuxToolCacheSuffix: jest.fn().mockResolvedValue(''),
+    getLinuxToolCacheSuffixFromUrl: jest.fn().mockReturnValue('')
+  };
+});
+
 import * as tc from '@actions/tool-cache';
 import * as core from '@actions/core';
 import * as finder from '../src/find-python';
 import * as installer from '../src/install-python';
+import * as utils from '../src/utils';
 
 import manifestData from './data/versions-manifest.json';
 
@@ -297,5 +311,223 @@ describe('Finder tests', () => {
     expect(thrown).toBeTruthy();
     expect(spyCoreAddPath).not.toHaveBeenCalled();
     expect(spyCoreExportVariable).not.toHaveBeenCalled();
+  });
+});
+
+// Dedicated tests for the OS-isolated tool-cache behavior introduced by
+// https://github.com/actions/setup-python/issues/1087. They override the
+// suppression of `getLinuxToolCacheSuffix`/`getLinuxToolCacheSuffixFromUrl`
+// from the module-level `jest.mock` above to assert that the tool-cache
+// architecture segment carries the Linux OS suffix and that installs only
+// reuse caches keyed by the same arch.
+//
+// We encode the OS in the architecture segment (e.g. `x64-linux-24.04`)
+// rather than the version segment because the version segment is matched
+// by `tc.find` via semver semantics, and a suffix like `-linux-24.04`
+// produces invalid semver (leading zero in `.04`). The arch segment is a
+// free-form string so it sidesteps all that.
+describe('OS-isolated tool-cache arch (issue #1087)', () => {
+  const env = process.env;
+  let writeSpy: jest.SpyInstance;
+  let getSuffixSpy: jest.SpyInstance;
+  let getSuffixFromUrlSpy: jest.SpyInstance;
+
+  beforeEach(async () => {
+    writeSpy = jest.spyOn(process.stdout, 'write');
+    writeSpy.mockImplementation(() => {});
+    process.env = {...env};
+    // Wipe any tool-cache fixtures left by sibling tests in this file so
+    // each case starts from a clean slate.
+    await io.rmRF(path.join(toolDir, 'Python'));
+    // Default these to non-Linux behavior so each test opts in explicitly.
+    getSuffixSpy = jest
+      .spyOn(utils, 'getLinuxToolCacheSuffix')
+      .mockResolvedValue('');
+    getSuffixFromUrlSpy = jest
+      .spyOn(utils, 'getLinuxToolCacheSuffixFromUrl')
+      .mockReturnValue('');
+  });
+
+  afterEach(async () => {
+    jest.resetAllMocks();
+    jest.clearAllMocks();
+    jest.restoreAllMocks();
+    process.env = env;
+    await io.rmRF(path.join(toolDir, 'Python'));
+  });
+
+  it('decorates the tool-cache lookup arch with the Linux OS suffix', async () => {
+    getSuffixSpy.mockResolvedValue('-linux-24.04');
+
+    const tcFindSpy = jest.spyOn(tc, 'find').mockReturnValue('');
+    // Stop after the lookup miss by skipping the manifest lookup.
+    jest
+      .spyOn(installer, 'findReleaseFromManifest')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      finder.useCpythonVersion('3.11', 'x64', false, false, false, false)
+    ).rejects.toThrow();
+
+    // First call: cache lookup keyed by plain semver + decorated arch.
+    expect(tcFindSpy).toHaveBeenCalledWith('Python', '3.11', 'x64-linux-24.04');
+  });
+
+  it('finds Python in the OS-suffixed tool-cache directory on Linux', async () => {
+    getSuffixSpy.mockResolvedValue('-linux-24.04');
+
+    const pythonDir: string = path.join(
+      toolDir,
+      'Python',
+      '3.0.0',
+      'x64-linux-24.04'
+    );
+    await io.mkdirP(pythonDir);
+    fs.writeFileSync(`${pythonDir}.complete`, 'hello');
+
+    await expect(
+      finder.useCpythonVersion('3.x', 'x64', false, false, false, false)
+    ).resolves.toEqual({impl: 'CPython', version: '3.0.0'});
+  });
+
+  it('does not reuse a 20.04 cache when running on 24.04', async () => {
+    getSuffixSpy.mockResolvedValue('-linux-24.04');
+
+    // Pre-populate the cache with a different OS arch suffix to simulate
+    // the cross-OS pollution that triggered issue #1087.
+    const stalePythonDir: string = path.join(
+      toolDir,
+      'Python',
+      '3.0.0',
+      'x64-linux-20.04'
+    );
+    await io.mkdirP(stalePythonDir);
+    fs.writeFileSync(`${stalePythonDir}.complete`, 'hello');
+
+    // No manifest entry for `3.x` either, so the install path is not
+    // exercised; we just want to confirm the stale cache is ignored.
+    jest
+      .spyOn(installer, 'findReleaseFromManifest')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      finder.useCpythonVersion('3.x', 'x64', false, false, false, false)
+    ).rejects.toThrow();
+  });
+
+  it('does not reuse a plain (unsuffixed) cache from before this fix', async () => {
+    getSuffixSpy.mockResolvedValue('-linux-24.04');
+
+    // Pre-existing legacy `Python/3.0.0/x64` install (no OS suffix).
+    // The lookup must NOT find this — the whole point of #1087 is to stop
+    // treating these as compatible across OSes.
+    const legacyPythonDir: string = path.join(
+      toolDir,
+      'Python',
+      '3.0.0',
+      'x64'
+    );
+    await io.mkdirP(legacyPythonDir);
+    fs.writeFileSync(`${legacyPythonDir}.complete`, 'hello');
+
+    jest
+      .spyOn(installer, 'findReleaseFromManifest')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      finder.useCpythonVersion('3.x', 'x64', false, false, false, false)
+    ).rejects.toThrow();
+  });
+
+  it('prefers the suffix derived from the release asset URL over runtime detection', async () => {
+    // Runtime says 24.04 but the matched asset says 20.04 — the asset wins.
+    getSuffixSpy.mockResolvedValue('-linux-24.04');
+    getSuffixFromUrlSpy.mockImplementation((url: string | undefined) =>
+      url && url.includes('20.04') ? '-linux-20.04' : ''
+    );
+
+    const fakeRelease: tc.IToolRelease = {
+      version: '3.11.0',
+      stable: true,
+      release_url: 'https://example.com/release',
+      files: [
+        {
+          filename: 'python-3.11.0-linux-20.04-x64.tar.gz',
+          arch: 'x64',
+          platform: 'linux',
+          download_url:
+            'https://example.com/python-3.11.0-linux-20.04-x64.tar.gz'
+        }
+      ]
+    };
+
+    const tcFindSpy = jest
+      .spyOn(tc, 'find')
+      // First call (initial cache lookup) misses.
+      .mockReturnValueOnce('')
+      // Second call (post-install lookup) should hit the asset-derived arch.
+      .mockReturnValueOnce(
+        path.join(toolDir, 'Python', '3.11.0', 'x64-linux-20.04')
+      );
+
+    jest
+      .spyOn(installer, 'findReleaseFromManifest')
+      .mockResolvedValue(fakeRelease);
+    const installSpy = jest
+      .spyOn(installer, 'installCpythonFromRelease')
+      .mockResolvedValue(undefined);
+
+    await finder.useCpythonVersion('3.11', 'x64', false, false, false, false);
+
+    // Installer is invoked with the install arch and the asset-derived
+    // toolcache arch.
+    expect(installSpy).toHaveBeenCalledWith(
+      fakeRelease,
+      'x64',
+      'x64-linux-20.04'
+    );
+
+    // The second `tc.find` call uses the asset-derived arch suffix, not
+    // the (different) runtime-detected suffix.
+    expect(tcFindSpy).toHaveBeenLastCalledWith(
+      'Python',
+      '3.11',
+      'x64-linux-20.04'
+    );
+  });
+
+  it('composes the OS suffix with the freethreaded arch suffix', async () => {
+    getSuffixSpy.mockResolvedValue('-linux-24.04');
+
+    const tcFindSpy = jest.spyOn(tc, 'find').mockReturnValue('');
+    jest
+      .spyOn(installer, 'findReleaseFromManifest')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      finder.useCpythonVersion('3.13t', 'x64', false, false, false, false)
+    ).rejects.toThrow();
+
+    // Freethreaded adds `-freethreaded`; the OS suffix is layered on top.
+    expect(tcFindSpy).toHaveBeenCalledWith(
+      'Python',
+      expect.any(String),
+      'x64-freethreaded-linux-24.04'
+    );
+  });
+
+  it('does not decorate the tool-cache arch on non-Linux platforms', async () => {
+    // Both helpers return '' for non-Linux — the suppression we set up in
+    // `beforeEach`. Make sure `tc.find` is called with the plain arch.
+    const tcFindSpy = jest.spyOn(tc, 'find').mockReturnValue('');
+    jest
+      .spyOn(installer, 'findReleaseFromManifest')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      finder.useCpythonVersion('3.11', 'x64', false, false, false, false)
+    ).rejects.toThrow();
+
+    expect(tcFindSpy).toHaveBeenCalledWith('Python', '3.11', 'x64');
   });
 });

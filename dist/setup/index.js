@@ -54588,7 +54588,6 @@ exports.desugarVersion = desugarVersion;
 exports.pythonVersionToSemantic = pythonVersionToSemantic;
 const os = __importStar(__nccwpck_require__(70857));
 const path = __importStar(__nccwpck_require__(16928));
-const fs = __importStar(__nccwpck_require__(79896));
 const utils_1 = __nccwpck_require__(71798);
 const semver = __importStar(__nccwpck_require__(62088));
 const installer = __importStar(__nccwpck_require__(41919));
@@ -54641,21 +54640,25 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         core.debug(`Using freethreaded version of ${semanticVersionSpec}`);
         architecture += '-freethreaded';
     }
-    // On Linux, append an OS-version suffix (e.g. '-linux-24.04') to the
-    // *version* segment of the tool-cache path so that Python installations
-    // cached for different OS versions on the same self-hosted runner do not
-    // conflict. For example:
-    //   <tool-cache>/Python/3.8.18/x64
-    // becomes
-    //   <tool-cache>/Python/3.8.18-linux-24.04/x64
-    // The suffix mirrors the python-versions download URL format
-    // (e.g. `python-3.8.18-linux-24.04-x64.tar.gz`). The downloaded tarball is
-    // OS-specific (linked against a particular glibc / OpenSSL), so reusing a
-    // cached install across OS versions can break the interpreter.
-    // See https://github.com/actions/setup-python/issues/1087.
-    const osVersionSuffix = await (0, utils_1.getLinuxToolCacheSuffix)();
+    // `installArchitecture` is what the upstream python-versions install
+    // script writes to disk (e.g. `x64`, `x64-freethreaded`). We keep a
+    // separate `toolcacheArchitecture` that may carry an extra OS suffix
+    // (e.g. `x64-linux-24.04`) so cached installs are isolated per-OS on
+    // self-hosted runners — see https://github.com/actions/setup-python/issues/1087.
+    // Encoding the OS in the arch segment (rather than the version segment)
+    // keeps the version segment as plain semver so `tc.find` keeps working
+    // unchanged.
+    const installArchitecture = architecture;
+    // Compute the suffix from runtime OS info up front; later, after we
+    // resolve the actual release from the manifest, we prefer to derive it
+    // from the chosen asset's download URL because that matches the
+    // artifact identity exactly.
+    let osVersionSuffix = await (0, utils_1.getLinuxToolCacheSuffix)();
+    let toolcacheArchitecture = osVersionSuffix
+        ? `${installArchitecture}${osVersionSuffix}`
+        : installArchitecture;
     if (osVersionSuffix) {
-        core.debug(`Using OS-isolated tool-cache path '<tool-cache>/Python/<version>${osVersionSuffix}/<arch>'.`);
+        core.debug(`Using OS-isolated tool-cache arch '${toolcacheArchitecture}' on Linux.`);
     }
     if (checkLatest) {
         manifest = await installer.getManifest();
@@ -54668,25 +54671,22 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
             core.info(`Failed to resolve version ${semanticVersionSpec} from manifest`);
         }
     }
-    let installDir = osVersionSuffix
-        ? findIsolatedCpythonInstall(semanticVersionSpec, architecture, osVersionSuffix)
-        : tc.find('Python', semanticVersionSpec, architecture);
+    let installDir = tc.find('Python', semanticVersionSpec, toolcacheArchitecture);
     if (!installDir) {
-        core.info(`Version ${semanticVersionSpec} was not found in the local cache`);
+        core.info(`Version ${semanticVersionSpec} was not found in the local cache${osVersionSuffix ? ` for tool-cache arch '${toolcacheArchitecture}'` : ''}`);
         const foundRelease = await installer.findReleaseFromManifest(semanticVersionSpec, architecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             core.info(`Version ${semanticVersionSpec} is available for downloading`);
-            await installer.installCpythonFromRelease(foundRelease);
-            if (osVersionSuffix) {
-                // The python-versions install script writes to
-                // <tool-cache>/Python/<exactVersion>/<arch>; move it to the
-                // OS-isolated path before looking it up.
-                renameInstallToIsolatedPath(foundRelease.version, architecture, osVersionSuffix);
-                installDir = findIsolatedCpythonInstall(semanticVersionSpec, architecture, osVersionSuffix);
+            // Prefer suffix derived from the actual download URL — it matches the
+            // artifact identity exactly (e.g. rhel/debian variants in future).
+            const assetSuffix = (0, utils_1.getLinuxToolCacheSuffixFromUrl)(foundRelease.files[0].download_url);
+            if (assetSuffix && assetSuffix !== osVersionSuffix) {
+                core.debug(`Using asset-derived OS suffix '${assetSuffix}' instead of runtime suffix '${osVersionSuffix}'.`);
+                osVersionSuffix = assetSuffix;
+                toolcacheArchitecture = `${installArchitecture}${osVersionSuffix}`;
             }
-            else {
-                installDir = tc.find('Python', semanticVersionSpec, architecture);
-            }
+            await installer.installCpythonFromRelease(foundRelease, installArchitecture, toolcacheArchitecture);
+            installDir = tc.find('Python', semanticVersionSpec, toolcacheArchitecture);
         }
     }
     if (!installDir) {
@@ -54803,118 +54803,6 @@ function versionFromPath(installDir) {
     const parts = installDir.split(path.sep);
     const idx = parts.findIndex(part => part === 'PyPy' || part === 'Python');
     return parts[idx + 1] || '';
-}
-/**
- * Resolve the tool-cache root the same way `tc.find` does.
- * Returns `null` if neither environment variable is set so callers can fall
- * back to the default tool-cache lookup.
- */
-function getToolCacheRoot() {
-    return (process.env['RUNNER_TOOL_CACHE'] ||
-        process.env['AGENT_TOOLSDIRECTORY'] ||
-        null);
-}
-/**
- * Look up a previously installed Python in the OS-isolated tool-cache path
- * `<tool-cache>/Python/<exactVersion><osSuffix>/<arch>`.
- *
- * This mirrors `tc.find()` semantics (the install is considered present only
- * when a sibling `.complete` marker file exists) but scans the version
- * directories itself because `tc.find()` always treats the version segment as
- * the bare semver and would never look at the suffixed directories.
- *
- * Returns the resolved install directory or an empty string if no compatible
- * version is installed.
- */
-function findIsolatedCpythonInstall(semanticVersionSpec, architecture, osVersionSuffix) {
-    const toolCacheRoot = getToolCacheRoot();
-    if (!toolCacheRoot) {
-        return '';
-    }
-    const pythonRoot = path.join(toolCacheRoot, 'Python');
-    if (!fs.existsSync(pythonRoot)) {
-        return '';
-    }
-    let entries;
-    try {
-        entries = fs.readdirSync(pythonRoot);
-    }
-    catch (err) {
-        core.debug(`Unable to enumerate '${pythonRoot}' for OS-isolated lookup: ${err.message}`);
-        return '';
-    }
-    // Only consider directories whose name ends with our OS suffix. Strip the
-    // suffix to get the exact installed Python version and match it against the
-    // requested semver range.
-    const candidates = entries
-        .filter(name => name.endsWith(osVersionSuffix))
-        .map(name => ({
-        exactVersion: name.slice(0, name.length - osVersionSuffix.length),
-        dirName: name
-    }))
-        .filter(({ exactVersion }) => semver.valid(exactVersion))
-        .filter(({ exactVersion }) => semver.satisfies(exactVersion, semanticVersionSpec, {
-        includePrerelease: true
-    }))
-        .sort((a, b) => semver.rcompare(a.exactVersion, b.exactVersion));
-    for (const { dirName } of candidates) {
-        const installDir = path.join(pythonRoot, dirName, architecture);
-        const marker = `${path.join(pythonRoot, dirName, architecture)}.complete`;
-        if (fs.existsSync(installDir) && fs.existsSync(marker)) {
-            return installDir;
-        }
-    }
-    return '';
-}
-/**
- * Move a freshly installed Python directory from the default tool-cache path
- *   <tool-cache>/Python/<exactVersion>/<arch>
- * to the OS-isolated path
- *   <tool-cache>/Python/<exactVersion><osSuffix>/<arch>
- * along with its sibling `.complete` marker file.
- *
- * The python-versions install script writes to the unsuffixed path because the
- * target directory layout is hard-coded in the upstream setup script and
- * cannot be overridden via env var. Renaming after install is the simplest
- * way to get the OS-isolated layout without forking the install script.
- *
- * No-op if the source path does not exist (the install script may have failed
- * before producing it) or if the destination already exists.
- */
-function renameInstallToIsolatedPath(exactVersion, architecture, osVersionSuffix) {
-    const toolCacheRoot = getToolCacheRoot();
-    if (!toolCacheRoot) {
-        core.debug('RUNNER_TOOL_CACHE is not set; skipping OS-isolated tool-cache rename.');
-        return;
-    }
-    const pythonRoot = path.join(toolCacheRoot, 'Python');
-    const sourceVersionDir = path.join(pythonRoot, exactVersion);
-    const targetVersionDir = path.join(pythonRoot, `${exactVersion}${osVersionSuffix}`);
-    if (!fs.existsSync(sourceVersionDir)) {
-        core.debug(`OS-isolated rename: source path '${sourceVersionDir}' does not exist; nothing to move.`);
-        return;
-    }
-    if (fs.existsSync(targetVersionDir)) {
-        core.debug(`OS-isolated rename: target path '${targetVersionDir}' already exists; leaving install scripts' output in place.`);
-        return;
-    }
-    try {
-        fs.renameSync(sourceVersionDir, targetVersionDir);
-        // Move any sibling architecture-level `.complete` markers
-        // (e.g. `<version>/x64.complete`) which were renamed implicitly with the
-        // directory move above — they live inside the renamed dir so no extra
-        // work is needed for them. But python-versions historically also writes
-        // a top-level `<version>.complete` marker; move it if present.
-        const sourceMarker = `${sourceVersionDir}.complete`;
-        const targetMarker = `${targetVersionDir}.complete`;
-        if (fs.existsSync(sourceMarker) && !fs.existsSync(targetMarker)) {
-            fs.renameSync(sourceMarker, targetMarker);
-        }
-        core.info(`Moved Python install to OS-isolated tool-cache path '${targetVersionDir}/${architecture}'.`);
-    }
-    catch (err) {
-        core.warning(`Failed to move Python install to OS-isolated tool-cache path '${targetVersionDir}': ${err.message}`);
-    }
 }
 /**
  * Python's prelease versions look like `3.7.0b2`.
@@ -55576,7 +55464,7 @@ async function installPython(workingDirectory) {
         await exec.exec('bash', ['./setup.sh'], options);
     }
 }
-async function installCpythonFromRelease(release) {
+async function installCpythonFromRelease(release, installArchitecture, toolcacheArchitecture) {
     if (!release.files || release.files.length === 0) {
         throw new Error('No files found in the release to download.');
     }
@@ -55596,6 +55484,17 @@ async function installCpythonFromRelease(release) {
         }
         core.info('Execute installation script');
         await installPython(pythonExtractedFolder);
+        // The upstream python-versions install script (setup.sh / setup.ps1)
+        // writes the install to <tool-cache>/Python/<release.version>/<arch>.
+        // When the caller wants the install isolated in a different arch
+        // segment (e.g. `x64-linux-24.04` for #1087), rename the directory
+        // after install so subsequent `tc.find` lookups hit the OS-isolated
+        // path rather than the legacy unsuffixed one.
+        if (installArchitecture &&
+            toolcacheArchitecture &&
+            installArchitecture !== toolcacheArchitecture) {
+            await recacheInstallUnderToolcacheArchitecture(release.version, installArchitecture, toolcacheArchitecture);
+        }
     }
     catch (err) {
         if (err instanceof tc.HTTPError) {
@@ -55614,6 +55513,54 @@ async function installCpythonFromRelease(release) {
             }
         }
         throw err;
+    }
+}
+/**
+ * Move the freshly installed Python from
+ *   <tool-cache>/Python/<releaseVersion>/<installArchitecture>
+ * to
+ *   <tool-cache>/Python/<releaseVersion>/<toolcacheArchitecture>
+ * (along with the sibling `.complete` marker `tc.find` looks for).
+ *
+ * The upstream python-versions install script hard-codes the destination
+ * arch segment and cannot be overridden via env var, so we rename after
+ * the fact to land the install under the decorated tool-cache arch (e.g.
+ * `x64-linux-24.04`). This decoration is what isolates per-OS caches for
+ * the self-hosted-runner scenario in #1087, while keeping the version
+ * segment as plain semver so `tc.find` keeps working unchanged.
+ *
+ * No-op if the source path does not exist or the target already exists.
+ */
+async function recacheInstallUnderToolcacheArchitecture(releaseVersion, installArchitecture, toolcacheArchitecture) {
+    const toolCacheRoot = process.env['RUNNER_TOOL_CACHE'] || process.env['AGENT_TOOLSDIRECTORY'];
+    if (!toolCacheRoot) {
+        core.debug('RUNNER_TOOL_CACHE is not set; skipping OS-isolated tool-cache rename.');
+        return;
+    }
+    const versionDir = path.join(toolCacheRoot, 'Python', releaseVersion);
+    const sourceArchDir = path.join(versionDir, installArchitecture);
+    const targetArchDir = path.join(versionDir, toolcacheArchitecture);
+    if (!fs.existsSync(sourceArchDir)) {
+        core.debug(`OS-isolated rename: source path '${sourceArchDir}' does not exist; nothing to move.`);
+        return;
+    }
+    if (fs.existsSync(targetArchDir)) {
+        core.debug(`OS-isolated rename: target path '${targetArchDir}' already exists; leaving install in place.`);
+        return;
+    }
+    try {
+        fs.renameSync(sourceArchDir, targetArchDir);
+        // `tc.find` looks for `<arch>.complete` next to the arch dir, not
+        // inside it. Move the sibling marker too.
+        const sourceMarker = `${sourceArchDir}.complete`;
+        const targetMarker = `${targetArchDir}.complete`;
+        if (fs.existsSync(sourceMarker) && !fs.existsSync(targetMarker)) {
+            fs.renameSync(sourceMarker, targetMarker);
+        }
+        core.info(`Cached Python install under OS-isolated tool-cache arch '${releaseVersion}/${toolcacheArchitecture}'.`);
+    }
+    catch (err) {
+        core.warning(`Failed to move Python install to OS-isolated tool-cache path '${targetArchDir}': ${err.message}`);
     }
 }
 
@@ -55849,6 +55796,7 @@ exports.logWarning = logWarning;
 exports.getLinuxInfo = getLinuxInfo;
 exports.getOSInfo = getOSInfo;
 exports.getLinuxToolCacheSuffix = getLinuxToolCacheSuffix;
+exports.getLinuxToolCacheSuffixFromUrl = getLinuxToolCacheSuffixFromUrl;
 exports.getVersionInputFromTomlFile = getVersionInputFromTomlFile;
 exports.getVersionsInputFromPlainFile = getVersionsInputFromPlainFile;
 exports.getVersionInputFromToolVersions = getVersionInputFromToolVersions;
@@ -56035,6 +55983,37 @@ async function getLinuxToolCacheSuffix() {
         core.debug(`Unable to determine Linux OS info for tool-cache isolation: ${err.message}`);
         return '';
     }
+}
+/**
+ * Extract the OS-isolated tool-cache suffix (e.g. `-linux-24.04`) directly
+ * from the python-versions release asset download URL.
+ *
+ * The URL pattern is:
+ *   python-<version>-linux-<osVersion>-<arch>.tar.gz
+ * e.g. `python-3.8.18-linux-24.04-x64.tar.gz` → `-linux-24.04`.
+ *
+ * Preferred over `getLinuxToolCacheSuffix()` because it keys the cache by
+ * the actual artifact identity rather than by runtime OS detection — if a
+ * future asset variant ships (e.g. `linux-debian-12`), the cache key tracks
+ * it automatically. Returns an empty string if the URL does not match the
+ * expected pattern or the platform is non-Linux.
+ *
+ * See https://github.com/actions/setup-python/issues/1087.
+ */
+function getLinuxToolCacheSuffixFromUrl(downloadUrl) {
+    if (!exports.IS_LINUX || !downloadUrl) {
+        return '';
+    }
+    // Match the segment between `-` after the version and the architecture.
+    // Examples we want to capture:
+    //   python-3.8.18-linux-24.04-x64.tar.gz       → linux-24.04
+    //   python-3.13.1-linux-rhel-9-x64.tar.gz      → linux-rhel-9
+    const match = downloadUrl.match(/python-[^/]+?-(linux[^/]*?)-[^-/]+\.tar\./);
+    if (!match) {
+        return '';
+    }
+    const sanitize = (value) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+    return `-${sanitize(match[1])}`;
 }
 /**
  * Extract a value from an object by following the keys path provided.

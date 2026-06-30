@@ -378,3 +378,84 @@ describe('isGhes', () => {
     expect(isGhes()).toBeTruthy();
   });
 });
+
+describe('getLinuxToolCacheSuffixFromUrl', () => {
+  const originalPlatform = process.platform;
+
+  // Helper: re-import utils with `process.platform` set to the requested
+  // value so the module-scoped `IS_LINUX` constant reflects the test
+  // platform. We assign the function name `getLinuxToolCacheSuffixFromUrl`
+  // to a local so the test bodies read naturally.
+  function loadForPlatform(platform: string) {
+    Object.defineProperty(process, 'platform', {value: platform});
+    let fn: (url: string | undefined) => string = () => '';
+    jest.isolateModules(() => {
+      /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires */
+      const reloaded = require('../src/utils');
+      /* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires */
+      fn = reloaded.getLinuxToolCacheSuffixFromUrl;
+    });
+    return fn;
+  }
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {value: originalPlatform});
+  });
+
+  it('returns empty string when URL is undefined', () => {
+    const fn = loadForPlatform('linux');
+    expect(fn(undefined)).toBe('');
+  });
+
+  it('returns empty string on non-Linux platforms even with a matching URL', () => {
+    const fn = loadForPlatform('darwin');
+    expect(
+      fn(
+        'https://github.com/actions/python-versions/releases/download/3.8.18-1234/python-3.8.18-linux-24.04-x64.tar.gz'
+      )
+    ).toBe('');
+  });
+
+  it('extracts -linux-24.04 from a standard python-versions asset URL', () => {
+    const fn = loadForPlatform('linux');
+    expect(
+      fn(
+        'https://github.com/actions/python-versions/releases/download/3.8.18-1234/python-3.8.18-linux-24.04-x64.tar.gz'
+      )
+    ).toBe('-linux-24.04');
+  });
+
+  it('extracts -linux-20.04 distinguishing between OS versions', () => {
+    const fn = loadForPlatform('linux');
+    expect(
+      fn(
+        'https://github.com/actions/python-versions/releases/download/3.8.18-1234/python-3.8.18-linux-20.04-x64.tar.gz'
+      )
+    ).toBe('-linux-20.04');
+  });
+
+  it('captures non-ubuntu Linux variants such as rhel-9', () => {
+    const fn = loadForPlatform('linux');
+    expect(
+      fn('https://example.com/python-3.13.1-linux-rhel-9-x64.tar.gz')
+    ).toBe('-linux-rhel-9');
+  });
+
+  it('returns empty string when the URL is not a Linux asset', () => {
+    const fn = loadForPlatform('linux');
+    expect(fn('python-3.13.1-darwin-x64.tar.gz')).toBe('');
+    expect(fn('python-3.13.1-win32-x64.tar.gz')).toBe('');
+  });
+
+  it('returns empty string when the URL is unrelated to python-versions', () => {
+    const fn = loadForPlatform('linux');
+    expect(fn('https://example.com/some-other-asset.tar.gz')).toBe('');
+  });
+
+  it('lowercases and sanitizes unusual characters', () => {
+    const fn = loadForPlatform('linux');
+    expect(
+      fn('https://example.com/python-3.13.1-linux-Ubuntu_22.04-x64.tar.gz')
+    ).toBe('-linux-ubuntu_22.04');
+  });
+});

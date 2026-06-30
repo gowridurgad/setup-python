@@ -260,6 +260,41 @@ export async function getLinuxToolCacheSuffix(): Promise<string> {
 }
 
 /**
+ * Extract the OS-isolated tool-cache suffix (e.g. `-linux-24.04`) directly
+ * from the python-versions release asset download URL.
+ *
+ * The URL pattern is:
+ *   python-<version>-linux-<osVersion>-<arch>.tar.gz
+ * e.g. `python-3.8.18-linux-24.04-x64.tar.gz` → `-linux-24.04`.
+ *
+ * Preferred over `getLinuxToolCacheSuffix()` because it keys the cache by
+ * the actual artifact identity rather than by runtime OS detection — if a
+ * future asset variant ships (e.g. `linux-debian-12`), the cache key tracks
+ * it automatically. Returns an empty string if the URL does not match the
+ * expected pattern or the platform is non-Linux.
+ *
+ * See https://github.com/actions/setup-python/issues/1087.
+ */
+export function getLinuxToolCacheSuffixFromUrl(
+  downloadUrl: string | undefined
+): string {
+  if (!IS_LINUX || !downloadUrl) {
+    return '';
+  }
+  // Match the segment between `-` after the version and the architecture.
+  // Examples we want to capture:
+  //   python-3.8.18-linux-24.04-x64.tar.gz       → linux-24.04
+  //   python-3.13.1-linux-rhel-9-x64.tar.gz      → linux-rhel-9
+  const match = downloadUrl.match(/python-[^/]+?-(linux[^/]*?)-[^-/]+\.tar\./);
+  if (!match) {
+    return '';
+  }
+  const sanitize = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+  return `-${sanitize(match[1])}`;
+}
+
+/**
  * Extract a value from an object by following the keys path provided.
  * If the value is present, it is returned. Otherwise undefined is returned.
  */

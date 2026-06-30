@@ -205,7 +205,11 @@ async function installPython(workingDirectory: string) {
   }
 }
 
-export async function installCpythonFromRelease(release: tc.IToolRelease) {
+export async function installCpythonFromRelease(
+  release: tc.IToolRelease,
+  installArchitecture?: string,
+  toolcacheArchitecture?: string
+) {
   if (!release.files || release.files.length === 0) {
     throw new Error('No files found in the release to download.');
   }
@@ -226,6 +230,24 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
 
     core.info('Execute installation script');
     await installPython(pythonExtractedFolder);
+
+    // The upstream python-versions install script (setup.sh / setup.ps1)
+    // writes the install to <tool-cache>/Python/<release.version>/<arch>.
+    // When the caller wants the install isolated in a different arch
+    // segment (e.g. `x64-linux-24.04` for #1087), rename the directory
+    // after install so subsequent `tc.find` lookups hit the OS-isolated
+    // path rather than the legacy unsuffixed one.
+    if (
+      installArchitecture &&
+      toolcacheArchitecture &&
+      installArchitecture !== toolcacheArchitecture
+    ) {
+      await recacheInstallUnderToolcacheArchitecture(
+        release.version,
+        installArchitecture,
+        toolcacheArchitecture
+      );
+    }
   } catch (err) {
     if (err instanceof tc.HTTPError) {
       // Rate limit?
@@ -245,5 +267,72 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
       }
     }
     throw err;
+  }
+}
+
+/**
+ * Move the freshly installed Python from
+ *   <tool-cache>/Python/<releaseVersion>/<installArchitecture>
+ * to
+ *   <tool-cache>/Python/<releaseVersion>/<toolcacheArchitecture>
+ * (along with the sibling `.complete` marker `tc.find` looks for).
+ *
+ * The upstream python-versions install script hard-codes the destination
+ * arch segment and cannot be overridden via env var, so we rename after
+ * the fact to land the install under the decorated tool-cache arch (e.g.
+ * `x64-linux-24.04`). This decoration is what isolates per-OS caches for
+ * the self-hosted-runner scenario in #1087, while keeping the version
+ * segment as plain semver so `tc.find` keeps working unchanged.
+ *
+ * No-op if the source path does not exist or the target already exists.
+ */
+async function recacheInstallUnderToolcacheArchitecture(
+  releaseVersion: string,
+  installArchitecture: string,
+  toolcacheArchitecture: string
+): Promise<void> {
+  const toolCacheRoot =
+    process.env['RUNNER_TOOL_CACHE'] || process.env['AGENT_TOOLSDIRECTORY'];
+  if (!toolCacheRoot) {
+    core.debug(
+      'RUNNER_TOOL_CACHE is not set; skipping OS-isolated tool-cache rename.'
+    );
+    return;
+  }
+  const versionDir = path.join(toolCacheRoot, 'Python', releaseVersion);
+  const sourceArchDir = path.join(versionDir, installArchitecture);
+  const targetArchDir = path.join(versionDir, toolcacheArchitecture);
+
+  if (!fs.existsSync(sourceArchDir)) {
+    core.debug(
+      `OS-isolated rename: source path '${sourceArchDir}' does not exist; nothing to move.`
+    );
+    return;
+  }
+  if (fs.existsSync(targetArchDir)) {
+    core.debug(
+      `OS-isolated rename: target path '${targetArchDir}' already exists; leaving install in place.`
+    );
+    return;
+  }
+
+  try {
+    fs.renameSync(sourceArchDir, targetArchDir);
+    // `tc.find` looks for `<arch>.complete` next to the arch dir, not
+    // inside it. Move the sibling marker too.
+    const sourceMarker = `${sourceArchDir}.complete`;
+    const targetMarker = `${targetArchDir}.complete`;
+    if (fs.existsSync(sourceMarker) && !fs.existsSync(targetMarker)) {
+      fs.renameSync(sourceMarker, targetMarker);
+    }
+    core.info(
+      `Cached Python install under OS-isolated tool-cache arch '${releaseVersion}/${toolcacheArchitecture}'.`
+    );
+  } catch (err) {
+    core.warning(
+      `Failed to move Python install to OS-isolated tool-cache path '${targetArchDir}': ${
+        (err as Error).message
+      }`
+    );
   }
 }
