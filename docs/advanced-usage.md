@@ -690,5 +690,6 @@ The `pip-install` input allows you to install dependencies as part of the Python
 ```
 > Note: This feature is intended for standard pip-based dependency installations.
 For complex workflows, or alternative package managers (e.g., poetry, pipenv), we recommend using separate steps to maintain clarity and flexibility.
+> The pip-install input installs packages globally and outside tracked dependency files, which may cause dependency resolution issues and won't be detected by security tools. These characteristics may not align with modern Python packaging practices or dependency auditing requirements.
 
 > The `pip-install` input mirrors the flexibility of a standard pip install command and supports most of its arguments.
