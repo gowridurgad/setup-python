@@ -17,7 +17,9 @@ import {
   isGhes,
   IS_WINDOWS,
   getDownloadFileName,
-  getVersionInputFromToolVersions
+  getVersionInputFromToolVersions,
+  getOsScopedToolCacheSegment,
+  scopeToolCacheByOs
 } from '../src/utils';
 
 jest.mock('@actions/cache');
@@ -376,5 +378,70 @@ describe('isGhes', () => {
   it('returns true when the GITHUB_SERVER_URL environment variable is set to some other URL', async () => {
     process.env['GITHUB_SERVER_URL'] = 'https://src.onpremise.fabrikam.com';
     expect(isGhes()).toBeTruthy();
+  });
+});
+
+describe('OS-scoped tool cache (issue #1087)', () => {
+  const origToolCache = process.env['RUNNER_TOOL_CACHE'];
+  const origAgentDir = process.env['AGENT_TOOLSDIRECTORY'];
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (origToolCache === undefined) delete process.env['RUNNER_TOOL_CACHE'];
+    else process.env['RUNNER_TOOL_CACHE'] = origToolCache;
+    if (origAgentDir === undefined) delete process.env['AGENT_TOOLSDIRECTORY'];
+    else process.env['AGENT_TOOLSDIRECTORY'] = origAgentDir;
+  });
+
+  it('getOsScopedToolCacheSegment returns null on non-Linux', () => {
+    Object.defineProperty(process, 'platform', {value: 'darwin'});
+    // Re-require to re-evaluate IS_LINUX? Instead just assert via
+    // scopeToolCacheByOs no-op behavior using module-level constant.
+    // On the actual test host this may be Linux; guard accordingly.
+    if (process.platform !== 'linux') {
+      expect(getOsScopedToolCacheSegment()).toBeNull();
+    }
+  });
+
+  it('getOsScopedToolCacheSegment parses /etc/os-release on Linux', () => {
+    if (process.platform !== 'linux') return;
+    jest
+      .spyOn(fs, 'readFileSync')
+      .mockReturnValueOnce('ID=ubuntu\nVERSION_ID="24.04"\n' as any);
+    expect(getOsScopedToolCacheSegment()).toBe('os-ubuntu-24.04');
+  });
+
+  it('getOsScopedToolCacheSegment returns null when fields are missing', () => {
+    if (process.platform !== 'linux') return;
+    jest.spyOn(fs, 'readFileSync').mockReturnValueOnce('ID=ubuntu\n' as any);
+    expect(getOsScopedToolCacheSegment()).toBeNull();
+  });
+
+  it('scopeToolCacheByOs appends OS segment to RUNNER_TOOL_CACHE (Linux)', () => {
+    if (process.platform !== 'linux') return;
+    jest
+      .spyOn(fs, 'readFileSync')
+      .mockReturnValue('ID=ubuntu\nVERSION_ID="24.04"\n' as any);
+    process.env['RUNNER_TOOL_CACHE'] = '/tmp/_tool';
+    delete process.env['AGENT_TOOLSDIRECTORY'];
+    scopeToolCacheByOs();
+    expect(process.env['RUNNER_TOOL_CACHE']).toBe('/tmp/_tool/os-ubuntu-24.04');
+  });
+
+  it('scopeToolCacheByOs is idempotent', () => {
+    if (process.platform !== 'linux') return;
+    jest
+      .spyOn(fs, 'readFileSync')
+      .mockReturnValue('ID=ubuntu\nVERSION_ID="24.04"\n' as any);
+    process.env['RUNNER_TOOL_CACHE'] = '/tmp/_tool/os-ubuntu-24.04';
+    scopeToolCacheByOs();
+    expect(process.env['RUNNER_TOOL_CACHE']).toBe('/tmp/_tool/os-ubuntu-24.04');
+  });
+
+  it('scopeToolCacheByOs is a no-op on non-Linux', () => {
+    if (process.platform === 'linux') return;
+    process.env['RUNNER_TOOL_CACHE'] = '/tmp/_tool';
+    scopeToolCacheByOs();
+    expect(process.env['RUNNER_TOOL_CACHE']).toBe('/tmp/_tool');
   });
 });

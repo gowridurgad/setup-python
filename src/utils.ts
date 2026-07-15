@@ -445,3 +445,52 @@ export function getDownloadFileName(downloadUrl: string): string | undefined {
     ? path.join(tempDir, path.basename(downloadUrl))
     : undefined;
 }
+
+/**
+ * Issue #1087: on Linux, scope the tool-cache root by OS id + version so a
+ * self-hosted runner that switches between different distro versions
+ * (e.g. Ubuntu 20.04 / 24.04) does not reuse a Python built against a
+ * different glibc / OpenSSL. Returns e.g. "os-ubuntu-24.04", or null when
+ * not applicable (non-Linux, or /etc/os-release unavailable/incomplete).
+ */
+export function getOsScopedToolCacheSegment(): string | null {
+  if (!IS_LINUX) return null;
+  try {
+    const content = fs.readFileSync('/etc/os-release', 'utf8');
+    const map: Record<string, string> = {};
+    for (const line of content.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const k = line.slice(0, eq).trim();
+      const v = line
+        .slice(eq + 1)
+        .trim()
+        .replace(/^"|"$/g, '');
+      if (k && v) map[k] = v;
+    }
+    const id = map['ID'];
+    const versionId = map['VERSION_ID'];
+    if (!id || !versionId) return null;
+    const safe = `${id}-${versionId}`.replace(/[^A-Za-z0-9._-]/g, '_');
+    return `os-${safe}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Issue #1087: apply {@link getOsScopedToolCacheSegment} to the tool-cache
+ * root env vars so all downstream consumers (`@actions/tool-cache`, and the
+ * `setup.sh` inside `actions/python-versions` release tarballs) transparently
+ * install/read under an OS-scoped root. Idempotent and a no-op off Linux.
+ */
+export function scopeToolCacheByOs(): void {
+  const seg = getOsScopedToolCacheSegment();
+  if (!seg) return;
+  for (const varName of ['RUNNER_TOOL_CACHE', 'AGENT_TOOLSDIRECTORY']) {
+    const cur = process.env[varName];
+    if (!cur) continue;
+    if (path.basename(cur) === seg) continue; // already scoped
+    process.env[varName] = path.join(cur, seg);
+  }
+}
