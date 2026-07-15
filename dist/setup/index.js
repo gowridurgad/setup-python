@@ -56503,9 +56503,20 @@ function getOsScopedToolCacheSegment() {
  * Issue #1087: apply {@link getOsScopedToolCacheSegment} to the tool-cache
  * root env vars so all downstream consumers (`@actions/tool-cache`, and the
  * `setup.sh` inside `actions/python-versions` release tarballs) transparently
- * install/read under an OS-scoped root. Idempotent and a no-op off Linux.
+ * install/read under an OS-scoped root.
+ *
+ * IMPORTANT: only applied on self-hosted runners. GitHub-hosted runners ship
+ * with a pre-installed, fully-configured Python under the un-scoped path
+ * (`/opt/hostedtoolcache/Python/…`); redirecting them would cause a needless
+ * re-install of a less-configured Python (e.g. breaks numpy source builds on
+ * freethreaded 3.13). Detected via the documented `RUNNER_ENVIRONMENT` env var
+ * (`github-hosted` on hosted, `self-hosted` on self-hosted runners).
+ *
+ * Idempotent and a no-op off Linux or on hosted runners.
  */
 function scopeToolCacheByOs() {
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
+        return;
     const seg = getOsScopedToolCacheSegment();
     if (!seg)
         return;

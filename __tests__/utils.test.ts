@@ -384,6 +384,7 @@ describe('isGhes', () => {
 describe('OS-scoped tool cache (issue #1087)', () => {
   const origToolCache = process.env['RUNNER_TOOL_CACHE'];
   const origAgentDir = process.env['AGENT_TOOLSDIRECTORY'];
+  const origRunnerEnv = process.env['RUNNER_ENVIRONMENT'];
 
   afterEach(() => {
     jest.restoreAllMocks();
@@ -391,6 +392,8 @@ describe('OS-scoped tool cache (issue #1087)', () => {
     else process.env['RUNNER_TOOL_CACHE'] = origToolCache;
     if (origAgentDir === undefined) delete process.env['AGENT_TOOLSDIRECTORY'];
     else process.env['AGENT_TOOLSDIRECTORY'] = origAgentDir;
+    if (origRunnerEnv === undefined) delete process.env['RUNNER_ENVIRONMENT'];
+    else process.env['RUNNER_ENVIRONMENT'] = origRunnerEnv;
   });
 
   it('getOsScopedToolCacheSegment returns null on non-Linux', () => {
@@ -419,8 +422,21 @@ describe('OS-scoped tool cache (issue #1087)', () => {
       .mockReturnValue('ID=ubuntu\nVERSION_ID="24.04"\n' as any);
     process.env['RUNNER_TOOL_CACHE'] = '/tmp/_tool';
     delete process.env['AGENT_TOOLSDIRECTORY'];
+    delete process.env['RUNNER_ENVIRONMENT'];
     scopeToolCacheByOs();
     expect(process.env['RUNNER_TOOL_CACHE']).toBe('/tmp/_tool/os-ubuntu-24.04');
+  });
+
+  it('scopeToolCacheByOs is a no-op on github-hosted runners', () => {
+    if (process.platform !== 'linux') return;
+    jest
+      .spyOn(fs, 'readFileSync')
+      .mockReturnValue('ID=ubuntu\nVERSION_ID="24.04"\n' as any);
+    process.env['RUNNER_TOOL_CACHE'] = '/opt/hostedtoolcache';
+    delete process.env['AGENT_TOOLSDIRECTORY'];
+    process.env['RUNNER_ENVIRONMENT'] = 'github-hosted';
+    scopeToolCacheByOs();
+    expect(process.env['RUNNER_TOOL_CACHE']).toBe('/opt/hostedtoolcache');
   });
 
   it('scopeToolCacheByOs is idempotent', () => {
@@ -429,6 +445,7 @@ describe('OS-scoped tool cache (issue #1087)', () => {
       .spyOn(fs, 'readFileSync')
       .mockReturnValue('ID=ubuntu\nVERSION_ID="24.04"\n' as any);
     process.env['RUNNER_TOOL_CACHE'] = '/tmp/_tool/os-ubuntu-24.04';
+    delete process.env['RUNNER_ENVIRONMENT'];
     scopeToolCacheByOs();
     expect(process.env['RUNNER_TOOL_CACHE']).toBe('/tmp/_tool/os-ubuntu-24.04');
   });
