@@ -394,7 +394,7 @@ describe('OS-scoped tool cache (issue #1087)', () => {
   });
 
   it('getOsScopedToolCacheSegment returns null on non-Linux', () => {
-    if (process.platform === 'linux') return; 
+    if (process.platform === 'linux') return;
     expect(getOsScopedToolCacheSegment()).toBeNull();
   });
 
