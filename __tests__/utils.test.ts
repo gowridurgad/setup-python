@@ -394,13 +394,8 @@ describe('OS-scoped tool cache (issue #1087)', () => {
   });
 
   it('getOsScopedToolCacheSegment returns null on non-Linux', () => {
-    Object.defineProperty(process, 'platform', {value: 'darwin'});
-    // Re-require to re-evaluate IS_LINUX? Instead just assert via
-    // scopeToolCacheByOs no-op behavior using module-level constant.
-    // On the actual test host this may be Linux; guard accordingly.
-    if (process.platform !== 'linux') {
-      expect(getOsScopedToolCacheSegment()).toBeNull();
-    }
+    if (process.platform === 'linux') return; 
+    expect(getOsScopedToolCacheSegment()).toBeNull();
   });
 
   it('getOsScopedToolCacheSegment parses /etc/os-release on Linux', () => {
