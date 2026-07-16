@@ -137,22 +137,28 @@ describe('findGraalPyToolCache', () => {
     jest.restoreAllMocks();
   });
 
-  it('GraalPy exists on the path and versions are satisfied', () => {
-    expect(finder.findGraalPyToolCache('23.0.0', architecture)).toEqual({
+  it('GraalPy exists on the path and versions are satisfied', async () => {
+    await expect(
+      finder.findGraalPyToolCache('23.0.0', architecture)
+    ).resolves.toEqual({
       installDir: graalpyPath,
       resolvedGraalPyVersion: actualGraalPyVersion
     });
   });
 
-  it('GraalPy exists on the path and versions are satisfied with semver', () => {
-    expect(finder.findGraalPyToolCache('23.0', architecture)).toEqual({
+  it('GraalPy exists on the path and versions are satisfied with semver', async () => {
+    await expect(
+      finder.findGraalPyToolCache('23.0', architecture)
+    ).resolves.toEqual({
       installDir: graalpyPath,
       resolvedGraalPyVersion: actualGraalPyVersion
     });
   });
 
-  it("GraalPy exists on the path, but version doesn't match", () => {
-    expect(finder.findGraalPyToolCache('22.3', architecture)).toEqual({
+  it("GraalPy exists on the path, but version doesn't match", async () => {
+    await expect(
+      finder.findGraalPyToolCache('22.3', architecture)
+    ).resolves.toEqual({
       installDir: '',
       resolvedGraalPyVersion: ''
     });

@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as semver from 'semver';
 import * as toml from '@iarna/toml';
 import * as exec from '@actions/exec';
+import * as io from '@actions/io';
 import * as ifm from '@actions/http-client/lib/interfaces';
 
 import * as http from 'http';
@@ -444,4 +445,34 @@ export function getDownloadFileName(downloadUrl: string): string | undefined {
   return IS_WINDOWS
     ? path.join(tempDir, path.basename(downloadUrl))
     : undefined;
+}
+
+export async function isCachedPythonUsable(
+  installDir: string
+): Promise<boolean> {
+  if (!IS_LINUX) return true;
+  const py = path.join(installDir, 'bin', 'python');
+  if (!fs.existsSync(py)) return false;
+  try {
+    const rc = await exec.exec(
+      py,
+      ['-c', 'import ssl, sys; sys.stdout.write(sys.version)'],
+      {
+        silent: true,
+        ignoreReturnCode: true,
+        env: {
+          ...process.env,
+          LD_LIBRARY_PATH: path.join(installDir, 'lib')
+        }
+      }
+    );
+    return rc === 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function purgeCachedTool(installDir: string): Promise<void> {
+  await io.rmRF(installDir);
+  await io.rmRF(`${installDir}.complete`);
 }

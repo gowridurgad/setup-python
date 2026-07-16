@@ -187,32 +187,40 @@ describe('findPyPyToolCache', () => {
     jest.restoreAllMocks();
   });
 
-  it('PyPy exists on the path and versions are satisfied', () => {
-    expect(finder.findPyPyToolCache('3.6.17', 'v7.5.4', architecture)).toEqual({
+  it('PyPy exists on the path and versions are satisfied', async () => {
+    await expect(
+      finder.findPyPyToolCache('3.6.17', 'v7.5.4', architecture)
+    ).resolves.toEqual({
       installDir: pypyPath,
       resolvedPythonVersion: actualPythonVersion,
       resolvedPyPyVersion: actualPyPyVersion
     });
   });
 
-  it('PyPy exists on the path and versions are satisfied with semver', () => {
-    expect(finder.findPyPyToolCache('3.6', 'v7.5.x', architecture)).toEqual({
+  it('PyPy exists on the path and versions are satisfied with semver', async () => {
+    await expect(
+      finder.findPyPyToolCache('3.6', 'v7.5.x', architecture)
+    ).resolves.toEqual({
       installDir: pypyPath,
       resolvedPythonVersion: actualPythonVersion,
       resolvedPyPyVersion: actualPyPyVersion
     });
   });
 
-  it("PyPy exists on the path, but Python version doesn't match", () => {
-    expect(finder.findPyPyToolCache('3.7', 'v7.5.4', architecture)).toEqual({
+  it("PyPy exists on the path, but Python version doesn't match", async () => {
+    await expect(
+      finder.findPyPyToolCache('3.7', 'v7.5.4', architecture)
+    ).resolves.toEqual({
       installDir: '',
       resolvedPythonVersion: '',
       resolvedPyPyVersion: ''
     });
   });
 
-  it("PyPy exists on the path, but PyPy version doesn't match", () => {
-    expect(finder.findPyPyToolCache('3.6', 'v7.5.1', architecture)).toEqual({
+  it("PyPy exists on the path, but PyPy version doesn't match", async () => {
+    await expect(
+      finder.findPyPyToolCache('3.6', 'v7.5.1', architecture)
+    ).resolves.toEqual({
       installDir: null,
       resolvedPythonVersion: '',
       resolvedPyPyVersion: ''

@@ -8,7 +8,9 @@ import {
   readExactPyPyVersionFile,
   validatePythonVersionFormatForPyPy,
   IPyPyManifestRelease,
-  getBinaryDirectory
+  getBinaryDirectory,
+  isCachedPythonUsable,
+  purgeCachedTool
 } from './utils.js';
 
 import * as semver from 'semver';
@@ -59,11 +61,12 @@ export async function findPyPyVersion(
     }
   }
 
-  ({installDir, resolvedPythonVersion, resolvedPyPyVersion} = findPyPyToolCache(
-    pypyVersionSpec.pythonVersion,
-    pypyVersionSpec.pypyVersion,
-    architecture
-  ));
+  ({installDir, resolvedPythonVersion, resolvedPyPyVersion} =
+    await findPyPyToolCache(
+      pypyVersionSpec.pythonVersion,
+      pypyVersionSpec.pypyVersion,
+      architecture
+    ));
 
   if (!installDir) {
     ({installDir, resolvedPythonVersion, resolvedPyPyVersion} =
@@ -105,7 +108,7 @@ export async function findPyPyVersion(
   return {resolvedPyPyVersion, resolvedPythonVersion};
 }
 
-export function findPyPyToolCache(
+export async function findPyPyToolCache(
   pythonVersion: string,
   pypyVersion: string,
   architecture: string
@@ -115,6 +118,16 @@ export function findPyPyToolCache(
   let installDir: string | null = IS_WINDOWS
     ? findPyPyInstallDirForWindows(pythonVersion)
     : tc.find('PyPy', pythonVersion, architecture);
+
+  if (installDir && !(await isCachedPythonUsable(installDir))) {
+    core.warning(
+      `Cached PyPy at ${installDir} is not runnable on this OS ` +
+        `(see https://github.com/actions/setup-python/issues/1087). ` +
+        `Removing and reinstalling.`
+    );
+    await purgeCachedTool(installDir);
+    installDir = null;
+  }
 
   if (installDir) {
     // 'tc.find' finds tool based on Python version but we also need to check

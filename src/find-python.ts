@@ -1,6 +1,12 @@
 import * as os from 'os';
 import * as path from 'path';
-import {IS_WINDOWS, IS_LINUX, getOSInfo} from './utils.js';
+import {
+  IS_WINDOWS,
+  IS_LINUX,
+  getOSInfo,
+  isCachedPythonUsable,
+  purgeCachedTool
+} from './utils.js';
 
 import * as semver from 'semver';
 
@@ -104,6 +110,22 @@ export async function useCpythonVersion(
     semanticVersionSpec,
     architecture
   );
+
+  // Issue #1087: on self-hosted runners that reuse the tool cache across
+  // different Linux OS versions, a cached Python built for one OS can be
+  // handed to a job running on another and crash with GLIBC / OpenSSL
+  // errors. Verify the cached interpreter can actually run here; if not,
+  // purge it and fall through to the normal install path.
+  if (installDir && !(await isCachedPythonUsable(installDir))) {
+    core.warning(
+      `Cached Python at ${installDir} is not runnable on this OS ` +
+        `(see https://github.com/actions/setup-python/issues/1087). ` +
+        `Removing and reinstalling.`
+    );
+    await purgeCachedTool(installDir);
+    installDir = null;
+  }
+
   if (!installDir) {
     core.info(
       `Version ${semanticVersionSpec} was not found in the local cache`

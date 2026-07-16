@@ -1,6 +1,12 @@
 import * as path from 'path';
 import * as graalpyInstall from './install-graalpy.js';
-import {IS_WINDOWS, validateVersion, IGraalPyManifestRelease} from './utils.js';
+import {
+  IS_WINDOWS,
+  validateVersion,
+  IGraalPyManifestRelease,
+  isCachedPythonUsable,
+  purgeCachedTool
+} from './utils.js';
 
 import * as semver from 'semver';
 import * as core from '@actions/core';
@@ -40,7 +46,7 @@ export async function findGraalPyVersion(
     }
   }
 
-  ({installDir, resolvedGraalPyVersion} = findGraalPyToolCache(
+  ({installDir, resolvedGraalPyVersion} = await findGraalPyToolCache(
     graalpyVersionSpec,
     architecture
   ));
@@ -77,7 +83,7 @@ export async function findGraalPyVersion(
   return resolvedGraalPyVersion;
 }
 
-export function findGraalPyToolCache(
+export async function findGraalPyToolCache(
   graalpyVersion: string,
   architecture: string
 ) {
@@ -87,6 +93,17 @@ export function findGraalPyToolCache(
     graalpyVersion,
     architecture
   );
+
+  // Issue #1087: purge cache entries whose interpreter can't run on this OS.
+  if (installDir && !(await isCachedPythonUsable(installDir))) {
+    core.warning(
+      `Cached GraalPy at ${installDir} is not runnable on this OS ` +
+        `(see https://github.com/actions/setup-python/issues/1087). ` +
+        `Removing and reinstalling.`
+    );
+    await purgeCachedTool(installDir);
+    installDir = null;
+  }
 
   if (installDir) {
     // 'tc.find' finds tool based on Python version but we also need to check

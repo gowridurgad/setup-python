@@ -9,6 +9,7 @@ import {
 } from '@jest/globals';
 import {fileURLToPath} from 'url';
 import path from 'path';
+import fsSync from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -45,9 +46,19 @@ jest.unstable_mockModule('@actions/core', () => ({
   toPosixPath: jest.fn((p: string) => p)
 }));
 
+// Mock @actions/io so we can spy on rmRF (issue #1087 purge helper).
+// mkdirP is used by other tests to create real temp dirs, so delegate to fs.
+// mkdirP is NOT a jest.fn to survive jest.resetAllMocks() calls elsewhere.
+jest.unstable_mockModule('@actions/io', () => ({
+  rmRF: jest.fn(async () => {}),
+  mkdirP: async (p: string) => {
+    fsSync.mkdirSync(p, {recursive: true});
+  }
+}));
+
 const cache = await import('@actions/cache');
 const core = await import('@actions/core');
-import * as io from '@actions/io';
+const io = await import('@actions/io');
 
 import fs from 'fs';
 
@@ -63,7 +74,9 @@ const {
   isGhes,
   IS_WINDOWS,
   getDownloadFileName,
-  getVersionInputFromToolVersions
+  getVersionInputFromToolVersions,
+  isCachedPythonUsable,
+  purgeCachedTool
 } = await import('../src/utils.js');
 
 describe('validatePythonVersionFormatForPyPy', () => {
@@ -423,5 +436,31 @@ describe('isGhes', () => {
   it('returns true when the GITHUB_SERVER_URL environment variable is set to some other URL', async () => {
     process.env['GITHUB_SERVER_URL'] = 'https://src.onpremise.fabrikam.com';
     expect(isGhes()).toBeTruthy();
+  });
+});
+
+describe('OS-compatibility guard (issue #1087)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('isCachedPythonUsable returns true immediately on non-Linux', async () => {
+    if (process.platform === 'linux') return;
+    // No fs / exec calls should be needed off Linux.
+    await expect(isCachedPythonUsable('/anything')).resolves.toBe(true);
+  });
+
+  it('isCachedPythonUsable returns false when the binary is missing on Linux', async () => {
+    if (process.platform !== 'linux') return;
+    jest.spyOn(fs, 'existsSync').mockReturnValueOnce(false);
+    await expect(isCachedPythonUsable('/nonexistent')).resolves.toBe(false);
+  });
+
+  it('purgeCachedTool removes the install dir and its .complete marker', async () => {
+    (io.rmRF as jest.Mock).mockReset();
+    (io.rmRF as jest.Mock).mockImplementation(async () => undefined);
+    await purgeCachedTool('/tmp/tool/Python/3.10/x64');
+    expect(io.rmRF).toHaveBeenCalledWith('/tmp/tool/Python/3.10/x64');
+    expect(io.rmRF).toHaveBeenCalledWith('/tmp/tool/Python/3.10/x64.complete');
   });
 });

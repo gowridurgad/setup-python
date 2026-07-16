@@ -97046,6 +97046,7 @@ var toml_toml = __nccwpck_require__(4572);
 
 
 
+
 const utils_IS_WINDOWS = process.platform === 'win32';
 const utils_IS_LINUX = process.platform === 'linux';
 const IS_MAC = process.platform === 'darwin';
@@ -97390,6 +97391,31 @@ function getDownloadFileName(downloadUrl) {
     return utils_IS_WINDOWS
         ? path.join(tempDir, path.basename(downloadUrl))
         : undefined;
+}
+async function isCachedPythonUsable(installDir) {
+    if (!utils_IS_LINUX)
+        return true;
+    const py = path.join(installDir, 'bin', 'python');
+    if (!fs.existsSync(py))
+        return false;
+    try {
+        const rc = await exec.exec(py, ['-c', 'import ssl, sys; sys.stdout.write(sys.version)'], {
+            silent: true,
+            ignoreReturnCode: true,
+            env: {
+                ...process.env,
+                LD_LIBRARY_PATH: path.join(installDir, 'lib')
+            }
+        });
+        return rc === 0;
+    }
+    catch {
+        return false;
+    }
+}
+async function purgeCachedTool(installDir) {
+    await io.rmRF(installDir);
+    await io.rmRF(`${installDir}.complete`);
 }
 
 ;// CONCATENATED MODULE: ./src/cache-distributions/cache-distributor.ts

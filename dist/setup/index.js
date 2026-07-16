@@ -97038,6 +97038,7 @@ var toml = __nccwpck_require__(4572);
 
 
 
+
 const utils_IS_WINDOWS = process.platform === 'win32';
 const IS_LINUX = process.platform === 'linux';
 const IS_MAC = process.platform === 'darwin';
@@ -97382,6 +97383,31 @@ function getDownloadFileName(downloadUrl) {
     return utils_IS_WINDOWS
         ? external_path_.join(tempDir, external_path_.basename(downloadUrl))
         : undefined;
+}
+async function isCachedPythonUsable(installDir) {
+    if (!IS_LINUX)
+        return true;
+    const py = external_path_.join(installDir, 'bin', 'python');
+    if (!external_fs_default().existsSync(py))
+        return false;
+    try {
+        const rc = await exec_exec(py, ['-c', 'import ssl, sys; sys.stdout.write(sys.version)'], {
+            silent: true,
+            ignoreReturnCode: true,
+            env: {
+                ...process.env,
+                LD_LIBRARY_PATH: external_path_.join(installDir, 'lib')
+            }
+        });
+        return rc === 0;
+    }
+    catch {
+        return false;
+    }
+}
+async function purgeCachedTool(installDir) {
+    await rmRF(installDir);
+    await rmRF(`${installDir}.complete`);
 }
 
 ;// CONCATENATED MODULE: ./node_modules/@actions/tool-cache/lib/manifest.js
@@ -98490,6 +98516,18 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         }
     }
     let installDir = find('Python', semanticVersionSpec, architecture);
+    // Issue #1087: on self-hosted runners that reuse the tool cache across
+    // different Linux OS versions, a cached Python built for one OS can be
+    // handed to a job running on another and crash with GLIBC / OpenSSL
+    // errors. Verify the cached interpreter can actually run here; if not,
+    // purge it and fall through to the normal install path.
+    if (installDir && !(await isCachedPythonUsable(installDir))) {
+        warning(`Cached Python at ${installDir} is not runnable on this OS ` +
+            `(see https://github.com/actions/setup-python/issues/1087). ` +
+            `Removing and reinstalling.`);
+        await purgeCachedTool(installDir);
+        installDir = null;
+    }
     if (!installDir) {
         info(`Version ${semanticVersionSpec} was not found in the local cache`);
         const foundRelease = await findReleaseFromManifest(semanticVersionSpec, architecture, manifest);
@@ -98818,7 +98856,8 @@ async function findPyPyVersion(versionSpec, architecture, updateEnvironment, che
             }
         }
     }
-    ({ installDir, resolvedPythonVersion, resolvedPyPyVersion } = findPyPyToolCache(pypyVersionSpec.pythonVersion, pypyVersionSpec.pypyVersion, architecture));
+    ({ installDir, resolvedPythonVersion, resolvedPyPyVersion } =
+        await findPyPyToolCache(pypyVersionSpec.pythonVersion, pypyVersionSpec.pypyVersion, architecture));
     if (!installDir) {
         ({ installDir, resolvedPythonVersion, resolvedPyPyVersion } =
             await installPyPy(pypyVersionSpec.pypyVersion, pypyVersionSpec.pythonVersion, architecture, allowPreReleases, releases));
@@ -98844,12 +98883,19 @@ async function findPyPyVersion(versionSpec, architecture, updateEnvironment, che
     setOutput('python-path', pythonPath);
     return { resolvedPyPyVersion, resolvedPythonVersion };
 }
-function findPyPyToolCache(pythonVersion, pypyVersion, architecture) {
+async function findPyPyToolCache(pythonVersion, pypyVersion, architecture) {
     let resolvedPyPyVersion = '';
     let resolvedPythonVersion = '';
     let installDir = utils_IS_WINDOWS
         ? findPyPyInstallDirForWindows(pythonVersion)
         : find('PyPy', pythonVersion, architecture);
+    if (installDir && !(await isCachedPythonUsable(installDir))) {
+        warning(`Cached PyPy at ${installDir} is not runnable on this OS ` +
+            `(see https://github.com/actions/setup-python/issues/1087). ` +
+            `Removing and reinstalling.`);
+        await purgeCachedTool(installDir);
+        installDir = null;
+    }
     if (installDir) {
         // 'tc.find' finds tool based on Python version but we also need to check
         // whether PyPy version satisfies requested version.
@@ -99109,7 +99155,7 @@ async function findGraalPyVersion(versionSpec, architecture, updateEnvironment, 
             }
         }
     }
-    ({ installDir, resolvedGraalPyVersion } = findGraalPyToolCache(graalpyVersionSpec, architecture));
+    ({ installDir, resolvedGraalPyVersion } = await findGraalPyToolCache(graalpyVersionSpec, architecture));
     if (!installDir) {
         ({ installDir, resolvedGraalPyVersion } = await installGraalPy(graalpyVersionSpec, architecture, allowPreReleases, releases));
     }
@@ -99134,9 +99180,17 @@ async function findGraalPyVersion(versionSpec, architecture, updateEnvironment, 
     setOutput('python-path', pythonPath);
     return resolvedGraalPyVersion;
 }
-function findGraalPyToolCache(graalpyVersion, architecture) {
+async function findGraalPyToolCache(graalpyVersion, architecture) {
     let resolvedGraalPyVersion = '';
     let installDir = find('GraalPy', graalpyVersion, architecture);
+    // Issue #1087: purge cache entries whose interpreter can't run on this OS.
+    if (installDir && !(await isCachedPythonUsable(installDir))) {
+        warning(`Cached GraalPy at ${installDir} is not runnable on this OS ` +
+            `(see https://github.com/actions/setup-python/issues/1087). ` +
+            `Removing and reinstalling.`);
+        await purgeCachedTool(installDir);
+        installDir = null;
+    }
     if (installDir) {
         // 'tc.find' finds tool based on Python version but we also need to check
         // whether GraalPy version satisfies requested version.
