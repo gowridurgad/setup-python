@@ -98527,9 +98527,9 @@ async function installPython(workingDirectory) {
 /**
  * Issue #1087: after `setup.sh` writes to `$RUNNER_TOOL_CACHE/Python/<ver>/<arch>`,
  * rename that directory to `<arch>-<osId>-<osVer>` on self-hosted Linux so
- * different distro versions get isolated cache entries. Also renames the
- * sibling `.complete` marker that `@actions/tool-cache` uses to validate
- * cache hits. No-op on hosted runners, macOS, and Windows.
+ * different distro versions get isolated cache entries. Also ensures the
+ * `.complete` marker (that `@actions/tool-cache` uses to validate cache
+ * hits) exists at the new path. No-op on hosted runners, macOS, Windows.
  */
 function renameToolCacheDirForOsScoping(release) {
     const suffix = getOsSuffix();
@@ -98544,20 +98544,39 @@ function renameToolCacheDirForOsScoping(release) {
     const versionDir = external_path_.join(toolRoot, 'Python', release.version);
     const src = external_path_.join(versionDir, arch);
     const dest = external_path_.join(versionDir, scopedArch);
-    if (!external_fs_namespaceObject.existsSync(src) || external_fs_namespaceObject.existsSync(dest))
-        return;
+    const srcMarker = `${src}.complete`;
+    const destMarker = `${dest}.complete`;
+    core_debug(`Issue #1087: OS-scoping cache dir: src=${src} dest=${dest} suffix=${suffix}`);
     try {
-        external_fs_namespaceObject.renameSync(src, dest);
-        const srcMarker = `${src}.complete`;
-        const destMarker = `${dest}.complete`;
-        if (external_fs_namespaceObject.existsSync(srcMarker)) {
+        // Move the directory if src exists and dest does not.
+        if (external_fs_namespaceObject.existsSync(src) && !external_fs_namespaceObject.existsSync(dest)) {
+            external_fs_namespaceObject.renameSync(src, dest);
+            core_debug(`Issue #1087: renamed dir ${src} -> ${dest}`);
+        }
+        else if (external_fs_namespaceObject.existsSync(src) && external_fs_namespaceObject.existsSync(dest)) {
+            // Both exist (e.g. re-install after a prior successful scoping).
+            // Remove the stale un-scoped copy so it doesn't get picked up later.
+            external_fs_namespaceObject.rmSync(src, { recursive: true, force: true });
+            core_debug(`Issue #1087: removed stale un-scoped copy at ${src} (dest already present)`);
+        }
+        // Move (or create) the .complete marker so tc.find hits.
+        // `setup.sh` from actions/python-versions may place the marker at either
+        // <arch>.complete or the version-level <version>.complete depending on
+        // the release. We only need the arch-level one for tc.find(tool, ver, arch).
+        if (external_fs_namespaceObject.existsSync(srcMarker) && !external_fs_namespaceObject.existsSync(destMarker)) {
             external_fs_namespaceObject.renameSync(srcMarker, destMarker);
+            core_debug(`Issue #1087: renamed marker ${srcMarker} -> ${destMarker}`);
         }
-        else {
-            // Ensure the .complete marker exists at the new path so tc.find hits.
+        else if (!external_fs_namespaceObject.existsSync(destMarker)) {
             external_fs_namespaceObject.writeFileSync(destMarker, '');
+            core_debug(`Issue #1087: created marker ${destMarker}`);
         }
-        core_debug(`Issue #1087: renamed ${src} -> ${dest}`);
+        // Sanity check — if this fails, tc.find will miss on the next run and
+        // we'll needlessly redownload. Log loudly so the failure isn't silent.
+        if (!external_fs_namespaceObject.existsSync(dest) || !external_fs_namespaceObject.existsSync(destMarker)) {
+            warning(`Issue #1087: OS-scoping incomplete. dest exists=${external_fs_namespaceObject.existsSync(dest)} destMarker exists=${external_fs_namespaceObject.existsSync(destMarker)}. ` +
+                `Subsequent runs may not hit the cache.`);
+        }
     }
     catch (e) {
         warning(`Issue #1087: failed to OS-scope Python cache dir at ${src}: ${e instanceof Error ? e.message : String(e)}`);
