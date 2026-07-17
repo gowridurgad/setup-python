@@ -15,7 +15,8 @@ import {
   IGraalPyManifestRelease,
   createSymlinkInFolder,
   isNightlyKeyword,
-  getNextPageUrl
+  getNextPageUrl,
+  getCacheArchitecture
 } from './utils.js';
 
 const TOKEN = core.getInput('token');
@@ -76,11 +77,12 @@ export async function installGraalPy(
     const toolDir = path.join(downloadDir, archiveName);
     let installDir = toolDir;
     if (!isNightlyKeyword(resolvedGraalPyVersion)) {
+      // Issue #1087: OS-scope the cache subdir on self-hosted Linux.
       installDir = await tc.cacheDir(
         toolDir,
         'GraalPy',
         resolvedGraalPyVersion,
-        architecture
+        getCacheArchitecture(architecture)
       );
     }
 

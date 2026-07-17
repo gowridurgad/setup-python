@@ -63,7 +63,9 @@ const {
   isGhes,
   IS_WINDOWS,
   getDownloadFileName,
-  getVersionInputFromToolVersions
+  getVersionInputFromToolVersions,
+  getOsSuffix,
+  getCacheArchitecture
 } = await import('../src/utils.js');
 
 describe('validatePythonVersionFormatForPyPy', () => {
@@ -423,5 +425,32 @@ describe('isGhes', () => {
   it('returns true when the GITHUB_SERVER_URL environment variable is set to some other URL', async () => {
     process.env['GITHUB_SERVER_URL'] = 'https://src.onpremise.fabrikam.com';
     expect(isGhes()).toBeTruthy();
+  });
+});
+
+describe('OS-scoped cache architecture (issue #1087)', () => {
+  const origEnv = process.env['RUNNER_ENVIRONMENT'];
+
+  afterEach(() => {
+    if (origEnv === undefined) delete process.env['RUNNER_ENVIRONMENT'];
+    else process.env['RUNNER_ENVIRONMENT'] = origEnv;
+  });
+
+  it('getOsSuffix returns null on non-Linux', () => {
+    if (process.platform === 'linux') return;
+    expect(getOsSuffix()).toBeNull();
+    expect(getCacheArchitecture('x64')).toBe('x64');
+  });
+
+  it('getOsSuffix returns null on GitHub-hosted runners even on Linux', () => {
+    process.env['RUNNER_ENVIRONMENT'] = 'github-hosted';
+    expect(getOsSuffix()).toBeNull();
+    expect(getCacheArchitecture('x64')).toBe('x64');
+  });
+
+  it('getCacheArchitecture returns plain arch when not applicable', () => {
+    process.env['RUNNER_ENVIRONMENT'] = 'github-hosted';
+    expect(getCacheArchitecture('arm64')).toBe('arm64');
+    expect(getCacheArchitecture('x64-freethreaded')).toBe('x64-freethreaded');
   });
 });

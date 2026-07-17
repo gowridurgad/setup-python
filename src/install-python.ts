@@ -6,7 +6,12 @@ import {ExecOptions} from '@actions/exec';
 import * as httpm from '@actions/http-client';
 import * as fs from 'fs';
 import * as semver from 'semver';
-import {IS_WINDOWS, IS_LINUX, getDownloadFileName} from './utils.js';
+import {
+  IS_WINDOWS,
+  IS_LINUX,
+  getDownloadFileName,
+  getOsSuffix
+} from './utils.js';
 import {IToolRelease} from '@actions/tool-cache';
 
 const TOKEN = core.getInput('token');
@@ -281,6 +286,51 @@ async function installPython(workingDirectory: string) {
   }
 }
 
+/**
+ * Issue #1087: after `setup.sh` writes to `$RUNNER_TOOL_CACHE/Python/<ver>/<arch>`,
+ * rename that directory to `<arch>-<osId>-<osVer>` on self-hosted Linux so
+ * different distro versions get isolated cache entries. Also renames the
+ * sibling `.complete` marker that `@actions/tool-cache` uses to validate
+ * cache hits. No-op on hosted runners, macOS, and Windows.
+ */
+function renameToolCacheDirForOsScoping(release: tc.IToolRelease): void {
+  const suffix = getOsSuffix();
+  if (!suffix) return;
+
+  const file = release.files[0];
+  const arch = file.arch;
+  const scopedArch = `${arch}-${suffix}`;
+
+  const toolRoot =
+    process.env['AGENT_TOOLSDIRECTORY'] || process.env['RUNNER_TOOL_CACHE'];
+  if (!toolRoot) return;
+
+  const versionDir = path.join(toolRoot, 'Python', release.version);
+  const src = path.join(versionDir, arch);
+  const dest = path.join(versionDir, scopedArch);
+
+  if (!fs.existsSync(src) || fs.existsSync(dest)) return;
+
+  try {
+    fs.renameSync(src, dest);
+    const srcMarker = `${src}.complete`;
+    const destMarker = `${dest}.complete`;
+    if (fs.existsSync(srcMarker)) {
+      fs.renameSync(srcMarker, destMarker);
+    } else {
+      // Ensure the .complete marker exists at the new path so tc.find hits.
+      fs.writeFileSync(destMarker, '');
+    }
+    core.debug(`Issue #1087: renamed ${src} -> ${dest}`);
+  } catch (e) {
+    core.warning(
+      `Issue #1087: failed to OS-scope Python cache dir at ${src}: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+  }
+}
+
 export async function installCpythonFromRelease(release: tc.IToolRelease) {
   if (!release.files || release.files.length === 0) {
     throw new Error('No files found in the release to download.');
@@ -302,6 +352,13 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
 
     core.info('Execute installation script');
     await installPython(pythonExtractedFolder);
+
+    // Issue #1087: `setup.sh` inside the release tarball writes to
+    // `Python/<ver>/<arch>` using the plain hardware arch. On self-hosted
+    // Linux we want `Python/<ver>/<arch>-<osId>-<osVer>` so different distro
+    // versions don't overwrite each other. Move the directory (and its
+    // sibling `.complete` marker) in place after install.
+    renameToolCacheDirForOsScoping(release);
   } catch (err) {
     if (err instanceof tc.HTTPError) {
       // Rate limit?

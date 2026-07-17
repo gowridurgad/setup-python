@@ -97469,6 +97469,62 @@ function getDownloadFileName(downloadUrl) {
         ? external_path_.join(tempDir, external_path_.basename(downloadUrl))
         : undefined;
 }
+/**
+ * Issue #1087: on self-hosted runners that reuse the tool cache across
+ * different Linux OS versions (e.g. Ubuntu 20.04 / 24.04 containers on the
+ * same host), a Python cached at `Python/<ver>/<arch>` from one OS gets
+ * handed to jobs on another OS and crashes with GLIBC / OpenSSL errors.
+ *
+ * Reads /etc/os-release and returns e.g. "ubuntu-24.04". Returns null when
+ * not applicable (non-Linux, hosted runner, or /etc/os-release incomplete).
+ * Hosted runners are excluded because they ship with a pre-installed,
+ * fully-configured Python at the un-suffixed path; adding a suffix there
+ * would force a wasteful re-install of a less-configured Python.
+ */
+function getOsSuffix() {
+    if (!IS_LINUX)
+        return null;
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
+        return null;
+    try {
+        const content = external_fs_default().readFileSync('/etc/os-release', 'utf8');
+        const map = {};
+        for (const line of content.split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq <= 0)
+                continue;
+            const k = line.slice(0, eq).trim();
+            const v = line
+                .slice(eq + 1)
+                .trim()
+                .replace(/^"|"$/g, '');
+            if (k && v)
+                map[k] = v;
+        }
+        const id = map['ID'];
+        const versionId = map['VERSION_ID'];
+        if (!id || !versionId)
+            return null;
+        return `${id}-${versionId}`.replace(/[^A-Za-z0-9._-]/g, '_');
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Issue #1087: returns the architecture string to use as the tool-cache
+ * subdirectory (the third arg to `tc.find` / `tc.cacheDir`). On self-hosted
+ * Linux, this appends the OS id + version so different distro versions get
+ * isolated cache entries. Elsewhere it returns the plain architecture.
+ *
+ * The plain `architecture` value must still be used for manifest lookups
+ * (`findReleaseFromManifest`) — the manifest keys files by hardware arch,
+ * not by OS.
+ */
+function getCacheArchitecture(architecture) {
+    const suffix = getOsSuffix();
+    return suffix ? `${architecture}-${suffix}` : architecture;
+}
 
 ;// CONCATENATED MODULE: ./node_modules/@actions/tool-cache/lib/manifest.js
 var manifest_awaiter = (undefined && undefined.__awaiter) || function (thisArg, _arguments, P, generator) {
@@ -98468,6 +98524,45 @@ async function installPython(workingDirectory) {
         await exec_exec('bash', ['./setup.sh'], options);
     }
 }
+/**
+ * Issue #1087: after `setup.sh` writes to `$RUNNER_TOOL_CACHE/Python/<ver>/<arch>`,
+ * rename that directory to `<arch>-<osId>-<osVer>` on self-hosted Linux so
+ * different distro versions get isolated cache entries. Also renames the
+ * sibling `.complete` marker that `@actions/tool-cache` uses to validate
+ * cache hits. No-op on hosted runners, macOS, and Windows.
+ */
+function renameToolCacheDirForOsScoping(release) {
+    const suffix = getOsSuffix();
+    if (!suffix)
+        return;
+    const file = release.files[0];
+    const arch = file.arch;
+    const scopedArch = `${arch}-${suffix}`;
+    const toolRoot = process.env['AGENT_TOOLSDIRECTORY'] || process.env['RUNNER_TOOL_CACHE'];
+    if (!toolRoot)
+        return;
+    const versionDir = external_path_.join(toolRoot, 'Python', release.version);
+    const src = external_path_.join(versionDir, arch);
+    const dest = external_path_.join(versionDir, scopedArch);
+    if (!external_fs_namespaceObject.existsSync(src) || external_fs_namespaceObject.existsSync(dest))
+        return;
+    try {
+        external_fs_namespaceObject.renameSync(src, dest);
+        const srcMarker = `${src}.complete`;
+        const destMarker = `${dest}.complete`;
+        if (external_fs_namespaceObject.existsSync(srcMarker)) {
+            external_fs_namespaceObject.renameSync(srcMarker, destMarker);
+        }
+        else {
+            // Ensure the .complete marker exists at the new path so tc.find hits.
+            external_fs_namespaceObject.writeFileSync(destMarker, '');
+        }
+        core_debug(`Issue #1087: renamed ${src} -> ${dest}`);
+    }
+    catch (e) {
+        warning(`Issue #1087: failed to OS-scope Python cache dir at ${src}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
 async function installCpythonFromRelease(release) {
     if (!release.files || release.files.length === 0) {
         throw new Error('No files found in the release to download.');
@@ -98488,6 +98583,12 @@ async function installCpythonFromRelease(release) {
         }
         info('Execute installation script');
         await installPython(pythonExtractedFolder);
+        // Issue #1087: `setup.sh` inside the release tarball writes to
+        // `Python/<ver>/<arch>` using the plain hardware arch. On self-hosted
+        // Linux we want `Python/<ver>/<arch>-<osId>-<osVer>` so different distro
+        // versions don't overwrite each other. Move the directory (and its
+        // sibling `.complete` marker) in place after install.
+        renameToolCacheDirForOsScoping(release);
     }
     catch (err) {
         if (err instanceof HTTPError) {
@@ -98564,6 +98665,10 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         core_debug(`Using freethreaded version of ${semanticVersionSpec}`);
         architecture += '-freethreaded';
     }
+    // Issue #1087: on self-hosted Linux, the tool-cache subdir is scoped by OS
+    // (e.g. 'x64-ubuntu-24.04') so different distro versions do not overwrite
+    // each other. `architecture` stays plain and is used for manifest lookups.
+    const cacheArchitecture = getCacheArchitecture(architecture);
     if (checkLatest) {
         manifest = await getManifest();
         const resolvedVersion = (await findReleaseFromManifest(semanticVersionSpec, architecture, manifest))?.version;
@@ -98575,14 +98680,14 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
             info(`Failed to resolve version ${semanticVersionSpec} from manifest`);
         }
     }
-    let installDir = find('Python', semanticVersionSpec, architecture);
+    let installDir = find('Python', semanticVersionSpec, cacheArchitecture);
     if (!installDir) {
         info(`Version ${semanticVersionSpec} was not found in the local cache`);
         const foundRelease = await findReleaseFromManifest(semanticVersionSpec, architecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             info(`Version ${semanticVersionSpec} is available for downloading`);
             await installCpythonFromRelease(foundRelease);
-            installDir = find('Python', semanticVersionSpec, architecture);
+            installDir = find('Python', semanticVersionSpec, cacheArchitecture);
         }
     }
     if (!installDir) {
@@ -98764,7 +98869,9 @@ async function installPyPy(pypyVersion, pythonVersion, architecture, allowPreRel
         const toolDir = external_path_.join(downloadDir, archiveName);
         let installDir = toolDir;
         if (!isNightlyKeyword(resolvedPyPyVersion)) {
-            installDir = await cacheDir(toolDir, 'PyPy', resolvedPythonVersion, architecture);
+            // Issue #1087: on self-hosted Linux, cache under the OS-scoped arch
+            // so different distro versions get isolated cache entries.
+            installDir = await cacheDir(toolDir, 'PyPy', resolvedPythonVersion, getCacheArchitecture(architecture));
         }
         writeExactPyPyVersionFile(installDir, resolvedPyPyVersion);
         const binaryPath = getBinaryDirectory(installDir);
@@ -98935,7 +99042,7 @@ function findPyPyToolCache(pythonVersion, pypyVersion, architecture) {
     let resolvedPythonVersion = '';
     let installDir = utils_IS_WINDOWS
         ? findPyPyInstallDirForWindows(pythonVersion)
-        : find('PyPy', pythonVersion, architecture);
+        : find('PyPy', pythonVersion, getCacheArchitecture(architecture));
     if (installDir) {
         // 'tc.find' finds tool based on Python version but we also need to check
         // whether PyPy version satisfies requested version.
@@ -99035,7 +99142,8 @@ async function installGraalPy(graalpyVersion, architecture, allowPreReleases, re
         const toolDir = external_path_.join(downloadDir, archiveName);
         let installDir = toolDir;
         if (!isNightlyKeyword(resolvedGraalPyVersion)) {
-            installDir = await cacheDir(toolDir, 'GraalPy', resolvedGraalPyVersion, architecture);
+            // Issue #1087: OS-scope the cache subdir on self-hosted Linux.
+            installDir = await cacheDir(toolDir, 'GraalPy', resolvedGraalPyVersion, getCacheArchitecture(architecture));
         }
         const binaryPath = external_path_.join(installDir, 'bin');
         await createGraalPySymlink(binaryPath, resolvedGraalPyVersion);
@@ -99222,7 +99330,7 @@ async function findGraalPyVersion(versionSpec, architecture, updateEnvironment, 
 }
 function findGraalPyToolCache(graalpyVersion, architecture) {
     let resolvedGraalPyVersion = '';
-    let installDir = find('GraalPy', graalpyVersion, architecture);
+    let installDir = find('GraalPy', graalpyVersion, getCacheArchitecture(architecture));
     if (installDir) {
         // 'tc.find' finds tool based on Python version but we also need to check
         // whether GraalPy version satisfies requested version.

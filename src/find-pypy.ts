@@ -8,7 +8,8 @@ import {
   readExactPyPyVersionFile,
   validatePythonVersionFormatForPyPy,
   IPyPyManifestRelease,
-  getBinaryDirectory
+  getBinaryDirectory,
+  getCacheArchitecture
 } from './utils.js';
 
 import * as semver from 'semver';
@@ -114,7 +115,7 @@ export function findPyPyToolCache(
   let resolvedPythonVersion = '';
   let installDir: string | null = IS_WINDOWS
     ? findPyPyInstallDirForWindows(pythonVersion)
-    : tc.find('PyPy', pythonVersion, architecture);
+    : tc.find('PyPy', pythonVersion, getCacheArchitecture(architecture));
 
   if (installDir) {
     // 'tc.find' finds tool based on Python version but we also need to check

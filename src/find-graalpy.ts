@@ -1,6 +1,11 @@
 import * as path from 'path';
 import * as graalpyInstall from './install-graalpy.js';
-import {IS_WINDOWS, validateVersion, IGraalPyManifestRelease} from './utils.js';
+import {
+  IS_WINDOWS,
+  validateVersion,
+  IGraalPyManifestRelease,
+  getCacheArchitecture
+} from './utils.js';
 
 import * as semver from 'semver';
 import * as core from '@actions/core';
@@ -85,7 +90,7 @@ export function findGraalPyToolCache(
   let installDir: string | null = tc.find(
     'GraalPy',
     graalpyVersion,
-    architecture
+    getCacheArchitecture(architecture)
   );
 
   if (installDir) {
