@@ -98329,6 +98329,7 @@ function _unique(values) {
 
 
 
+
 const TOKEN = getInput('token');
 const AUTH = !TOKEN ? undefined : `token ${TOKEN}`;
 const MANIFEST_REPO_OWNER = 'actions';
@@ -98494,12 +98495,20 @@ async function getManifestFromURL() {
     }
     return response.result;
 }
-async function installPython(workingDirectory) {
+async function installPython(workingDirectory, toolCacheOverride) {
     const options = {
         cwd: workingDirectory,
         env: {
             ...process.env,
-            ...(IS_LINUX && { LD_LIBRARY_PATH: external_path_.join(workingDirectory, 'lib') })
+            ...(IS_LINUX && { LD_LIBRARY_PATH: external_path_.join(workingDirectory, 'lib') }),
+            // Issue #1087: on self-hosted Linux, redirect setup.sh's install target
+            // to a temp dir so its `rm -rf $VERSION_PATH` step can't destroy our
+            // previously-scoped sibling directories. We move the finished install
+            // into the real (OS-scoped) tool-cache location afterward.
+            ...(toolCacheOverride && {
+                AGENT_TOOLSDIRECTORY: toolCacheOverride,
+                RUNNER_TOOL_CACHE: toolCacheOverride
+            })
         },
         silent: true,
         listeners: {
@@ -98525,61 +98534,80 @@ async function installPython(workingDirectory) {
     }
 }
 /**
- * Issue #1087: after `setup.sh` writes to `$RUNNER_TOOL_CACHE/Python/<ver>/<arch>`,
- * rename that directory to `<arch>-<osId>-<osVer>` on self-hosted Linux so
- * different distro versions get isolated cache entries. Also ensures the
- * `.complete` marker (that `@actions/tool-cache` uses to validate cache
- * hits) exists at the new path. No-op on hosted runners, macOS, Windows.
+ * Issue #1087: relocate a freshly-installed Python from a scratch tool-cache
+ * root into the real cache under an OS-scoped arch directory.
+ *
+ * Why the scratch root? `setup.sh` inside `actions/python-versions` release
+ * tarballs starts by `rm -rf`-ing `$AGENT_TOOLSDIRECTORY/Python/<version>/`,
+ * which would destroy any previously-scoped sibling directories (e.g. wipe
+ * `x64-ubuntu-20.04/` when a job installs for `x64-ubuntu-24.04/`). By
+ * pointing setup.sh at a fresh temp dir we let it do its destructive setup
+ * safely, then move the finished tree into the real cache ourselves.
+ *
+ * Layout after this function:
+ *   $REAL_TOOL_CACHE/Python/<version>/<arch>-<osId>-<osVer>/         (files)
+ *   $REAL_TOOL_CACHE/Python/<version>/<arch>-<osId>-<osVer>.complete (marker)
  */
-function renameToolCacheDirForOsScoping(release) {
-    const suffix = getOsSuffix();
-    if (!suffix)
-        return;
-    const file = release.files[0];
-    const arch = file.arch;
+function relocateFromScratchToScopedCache(release, scratchRoot, suffix) {
+    const arch = release.files[0].arch;
     const scopedArch = `${arch}-${suffix}`;
-    const toolRoot = process.env['AGENT_TOOLSDIRECTORY'] || process.env['RUNNER_TOOL_CACHE'];
-    if (!toolRoot)
+    const realRoot = process.env['AGENT_TOOLSDIRECTORY'] || process.env['RUNNER_TOOL_CACHE'];
+    if (!realRoot) {
+        warning('Issue #1087: neither AGENT_TOOLSDIRECTORY nor RUNNER_TOOL_CACHE is ' +
+            'set; cannot relocate scratch install. Cache will not be reused.');
         return;
-    const versionDir = external_path_.join(toolRoot, 'Python', release.version);
-    const src = external_path_.join(versionDir, arch);
-    const dest = external_path_.join(versionDir, scopedArch);
-    const srcMarker = `${src}.complete`;
+    }
+    const src = external_path_.join(scratchRoot, 'Python', release.version, arch);
+    const destVersionDir = external_path_.join(realRoot, 'Python', release.version);
+    const dest = external_path_.join(destVersionDir, scopedArch);
     const destMarker = `${dest}.complete`;
-    core_debug(`Issue #1087: OS-scoping cache dir: src=${src} dest=${dest} suffix=${suffix}`);
+    core_debug(`Issue #1087: relocate src=${src} -> dest=${dest} (suffix=${suffix})`);
     try {
-        // Move the directory if src exists and dest does not.
-        if (external_fs_namespaceObject.existsSync(src) && !external_fs_namespaceObject.existsSync(dest)) {
+        if (!external_fs_namespaceObject.existsSync(src)) {
+            warning(`Issue #1087: expected install at ${src} but it does not exist. ` +
+                `Cache will not be scoped.`);
+            return;
+        }
+        external_fs_namespaceObject.mkdirSync(destVersionDir, { recursive: true });
+        // If a previous run already scoped this exact combination, clear it.
+        if (external_fs_namespaceObject.existsSync(dest)) {
+            external_fs_namespaceObject.rmSync(dest, { recursive: true, force: true });
+        }
+        if (external_fs_namespaceObject.existsSync(destMarker)) {
+            external_fs_namespaceObject.rmSync(destMarker, { force: true });
+        }
+        // Try atomic rename first; fall back to copy if src/dest live on
+        // different filesystems (EXDEV, e.g. /tmp vs /opt on some runners).
+        try {
             external_fs_namespaceObject.renameSync(src, dest);
-            core_debug(`Issue #1087: renamed dir ${src} -> ${dest}`);
         }
-        else if (external_fs_namespaceObject.existsSync(src) && external_fs_namespaceObject.existsSync(dest)) {
-            // Both exist (e.g. re-install after a prior successful scoping).
-            // Remove the stale un-scoped copy so it doesn't get picked up later.
-            external_fs_namespaceObject.rmSync(src, { recursive: true, force: true });
-            core_debug(`Issue #1087: removed stale un-scoped copy at ${src} (dest already present)`);
+        catch (e) {
+            if (e.code === 'EXDEV') {
+                core_debug('Issue #1087: cross-device rename; falling back to copy.');
+                external_fs_namespaceObject.cpSync(src, dest, { recursive: true });
+                external_fs_namespaceObject.rmSync(src, { recursive: true, force: true });
+            }
+            else {
+                throw e;
+            }
         }
-        // Move (or create) the .complete marker so tc.find hits.
-        // `setup.sh` from actions/python-versions may place the marker at either
-        // <arch>.complete or the version-level <version>.complete depending on
-        // the release. We only need the arch-level one for tc.find(tool, ver, arch).
-        if (external_fs_namespaceObject.existsSync(srcMarker) && !external_fs_namespaceObject.existsSync(destMarker)) {
-            external_fs_namespaceObject.renameSync(srcMarker, destMarker);
-            core_debug(`Issue #1087: renamed marker ${srcMarker} -> ${destMarker}`);
-        }
-        else if (!external_fs_namespaceObject.existsSync(destMarker)) {
-            external_fs_namespaceObject.writeFileSync(destMarker, '');
-            core_debug(`Issue #1087: created marker ${destMarker}`);
-        }
-        // Sanity check — if this fails, tc.find will miss on the next run and
-        // we'll needlessly redownload. Log loudly so the failure isn't silent.
-        if (!external_fs_namespaceObject.existsSync(dest) || !external_fs_namespaceObject.existsSync(destMarker)) {
-            warning(`Issue #1087: OS-scoping incomplete. dest exists=${external_fs_namespaceObject.existsSync(dest)} destMarker exists=${external_fs_namespaceObject.existsSync(destMarker)}. ` +
-                `Subsequent runs may not hit the cache.`);
-        }
+        // Write the marker last so tc.find only reports "usable" after the
+        // relocation is fully committed.
+        external_fs_namespaceObject.writeFileSync(destMarker, '');
+        core_debug(`Issue #1087: relocated to ${dest}`);
     }
     catch (e) {
-        warning(`Issue #1087: failed to OS-scope Python cache dir at ${src}: ${e instanceof Error ? e.message : String(e)}`);
+        warning(`Issue #1087: failed to relocate scratch install into scoped cache: ` +
+            `${e instanceof Error ? e.message : String(e)}`);
+    }
+    finally {
+        // Always clean up the scratch dir; even a partial install leaves debris.
+        try {
+            external_fs_namespaceObject.rmSync(scratchRoot, { recursive: true, force: true });
+        }
+        catch {
+            /* best effort */
+        }
     }
 }
 async function installCpythonFromRelease(release) {
@@ -98600,14 +98628,19 @@ async function installCpythonFromRelease(release) {
         else {
             pythonExtractedFolder = await tool_cache_extractTar(pythonPath);
         }
+        // Issue #1087: on self-hosted Linux, install into a scratch tool-cache
+        // dir so that setup.sh's destructive `rm -rf $VERSION_PATH` can't wipe
+        // previously-scoped sibling arch directories. Then relocate the result
+        // into the real cache under the OS-scoped arch name.
+        const suffix = getOsSuffix();
+        const scratchRoot = suffix
+            ? external_fs_namespaceObject.mkdtempSync(external_path_.join(external_os_.tmpdir(), 'setup-python-1087-'))
+            : undefined;
         info('Execute installation script');
-        await installPython(pythonExtractedFolder);
-        // Issue #1087: `setup.sh` inside the release tarball writes to
-        // `Python/<ver>/<arch>` using the plain hardware arch. On self-hosted
-        // Linux we want `Python/<ver>/<arch>-<osId>-<osVer>` so different distro
-        // versions don't overwrite each other. Move the directory (and its
-        // sibling `.complete` marker) in place after install.
-        renameToolCacheDirForOsScoping(release);
+        await installPython(pythonExtractedFolder, scratchRoot);
+        if (suffix && scratchRoot) {
+            relocateFromScratchToScopedCache(release, scratchRoot, suffix);
+        }
     }
     catch (err) {
         if (err instanceof HTTPError) {
