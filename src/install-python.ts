@@ -316,12 +316,17 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
       if (toolCache) {
         const origDir = path.join(toolCache, 'Python', release.version);
         const newDir = path.join(toolCache, 'Python', release.version + suffix);
+        const origMarker = origDir + '.complete';
+        const newMarker = newDir + '.complete';
         try {
           if (fs.existsSync(origDir) && !fs.existsSync(newDir)) {
             fs.renameSync(origDir, newDir);
             core.info(
               `Renamed cache dir for OS scoping: ${origDir} -> ${newDir}`
             );
+          }
+          if (fs.existsSync(origMarker) && !fs.existsSync(newMarker)) {
+            fs.renameSync(origMarker, newMarker);
           }
         } catch (e) {
           core.warning(
