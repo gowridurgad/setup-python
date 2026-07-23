@@ -1,5 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 import {IS_WINDOWS, IS_LINUX, getOSInfo} from './utils.js';
 
 import * as semver from 'semver';
@@ -125,6 +126,21 @@ export async function useCpythonVersion(
     if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
       core.info(`Version ${semanticVersionSpec} is available for downloading`);
       await installer.installCpythonFromRelease(foundRelease);
+
+      if (architecture !== manifestArchitecture) {
+        const from = tc.find(
+          'Python',
+          semanticVersionSpec,
+          manifestArchitecture
+        );
+        if (from) {
+          const to = path.join(path.dirname(from), architecture);
+          if (!fs.existsSync(to)) {
+            fs.renameSync(from, to);
+            fs.renameSync(`${from}.complete`, `${to}.complete`);
+          }
+        }
+      }
 
       installDir = tc.find('Python', semanticVersionSpec, architecture);
     }

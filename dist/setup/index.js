@@ -98518,6 +98518,7 @@ async function installCpythonFromRelease(release) {
 
 
 
+
 // Python has "scripts" or "bin" directories where command-line tools that come with packages are installed.
 // This is where pip is, along with anything that pip installs.
 // There is a separate directory for `pip install --user`.
@@ -98589,6 +98590,16 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             info(`Version ${semanticVersionSpec} is available for downloading`);
             await installCpythonFromRelease(foundRelease);
+            if (architecture !== manifestArchitecture) {
+                const from = find('Python', semanticVersionSpec, manifestArchitecture);
+                if (from) {
+                    const to = external_path_.join(external_path_.dirname(from), architecture);
+                    if (!external_fs_namespaceObject.existsSync(to)) {
+                        external_fs_namespaceObject.renameSync(from, to);
+                        external_fs_namespaceObject.renameSync(`${from}.complete`, `${to}.complete`);
+                    }
+                }
+            }
             installDir = find('Python', semanticVersionSpec, architecture);
         }
     }
