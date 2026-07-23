@@ -98583,36 +98583,41 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
             info(`Failed to resolve version ${semanticVersionSpec} from manifest`);
         }
     }
-    info(`[1087-arch] manifestArch=${manifestArchitecture} scopedArch=${architecture} RUNNER_TOOL_CACHE=${process.env.RUNNER_TOOL_CACHE} AGENT_TOOLSDIRECTORY=${process.env.AGENT_TOOLSDIRECTORY} RUNNER_ENVIRONMENT=${process.env.RUNNER_ENVIRONMENT}`);
     let installDir = find('Python', semanticVersionSpec, architecture);
-    info(`[1087-arch] tc.find returned: ${installDir || '<empty>'}`);
     if (!installDir) {
         info(`Version ${semanticVersionSpec} was not found in the local cache`);
         const foundRelease = await findReleaseFromManifest(semanticVersionSpec, manifestArchitecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             info(`Version ${semanticVersionSpec} is available for downloading`);
+            // OS-scoped arch suffix (#1087): setup.sh does `rm -rf Python/<ver>/`,
+            // so we must stash sibling scoped arch dirs across the install, then
+            // rename the freshly-installed <manifestArch> to <scopedArch>.
+            const scope = architecture !== manifestArchitecture;
+            const root = process.env.AGENT_TOOLSDIRECTORY || process.env.RUNNER_TOOL_CACHE || '';
+            const ver = node_modules_semver.clean(foundRelease.version) || foundRelease.version;
+            const base = external_path_.join(root, 'Python', ver);
+            const stash = scope ? `${base}.stash-${process.pid}` : '';
+            const keep = (e) => e !== manifestArchitecture && e !== `${manifestArchitecture}.complete`;
+            if (scope && external_fs_namespaceObject.existsSync(base)) {
+                external_fs_namespaceObject.mkdirSync(stash, { recursive: true });
+                for (const e of external_fs_namespaceObject.readdirSync(base).filter(keep))
+                    external_fs_namespaceObject.renameSync(external_path_.join(base, e), external_path_.join(stash, e));
+            }
             await installCpythonFromRelease(foundRelease);
-            if (architecture !== manifestArchitecture) {
-                // The install script installs to <toolcache>/Python/<resolvedVersion>/<plainArch>.
-                // Relocate to the OS-suffixed arch so tc.find() resolves it on later runs (#1087).
-                const toolcacheRoot = process.env.AGENT_TOOLSDIRECTORY ||
-                    process.env.RUNNER_TOOL_CACHE ||
-                    '';
-                const resolvedVersion = node_modules_semver.clean(foundRelease.version) || foundRelease.version;
-                const base = external_path_.join(toolcacheRoot, 'Python', resolvedVersion);
+            if (scope) {
+                if (external_fs_namespaceObject.existsSync(stash)) {
+                    for (const e of external_fs_namespaceObject.readdirSync(stash))
+                        external_fs_namespaceObject.renameSync(external_path_.join(stash, e), external_path_.join(base, e));
+                    external_fs_namespaceObject.rmSync(stash, { recursive: true, force: true });
+                }
                 const from = external_path_.join(base, manifestArchitecture);
                 const to = external_path_.join(base, architecture);
                 if (external_fs_namespaceObject.existsSync(from)) {
-                    if (external_fs_namespaceObject.existsSync(to)) {
-                        external_fs_namespaceObject.rmSync(to, { recursive: true, force: true });
-                    }
+                    external_fs_namespaceObject.rmSync(to, { recursive: true, force: true });
                     external_fs_namespaceObject.renameSync(from, to);
                     external_fs_namespaceObject.writeFileSync(`${to}.complete`, '');
                     external_fs_namespaceObject.rmSync(`${from}.complete`, { force: true });
-                    info(`[1087-arch] renamed ${from} -> ${to} ; toExists=${external_fs_namespaceObject.existsSync(to)} markerExists=${external_fs_namespaceObject.existsSync(`${to}.complete`)}`);
-                }
-                else {
-                    info(`[1087-arch] rename SKIPPED: from=${from} does not exist`);
+                    info(`[1087-arch] scoped install -> ${to}`);
                 }
             }
             installDir = find('Python', semanticVersionSpec, architecture);

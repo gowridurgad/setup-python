@@ -108,15 +108,11 @@ export async function useCpythonVersion(
     }
   }
 
-  core.info(
-    `[1087-arch] manifestArch=${manifestArchitecture} scopedArch=${architecture} RUNNER_TOOL_CACHE=${process.env.RUNNER_TOOL_CACHE} AGENT_TOOLSDIRECTORY=${process.env.AGENT_TOOLSDIRECTORY} RUNNER_ENVIRONMENT=${process.env.RUNNER_ENVIRONMENT}`
-  );
   let installDir: string | null = tc.find(
     'Python',
     semanticVersionSpec,
     architecture
   );
-  core.info(`[1087-arch] tc.find returned: ${installDir || '<empty>'}`);
   if (!installDir) {
     core.info(
       `Version ${semanticVersionSpec} was not found in the local cache`
@@ -129,32 +125,41 @@ export async function useCpythonVersion(
 
     if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
       core.info(`Version ${semanticVersionSpec} is available for downloading`);
+
+      // OS-scoped arch suffix (#1087): setup.sh does `rm -rf Python/<ver>/`,
+      // so we must stash sibling scoped arch dirs across the install, then
+      // rename the freshly-installed <manifestArch> to <scopedArch>.
+      const scope = architecture !== manifestArchitecture;
+      const root =
+        process.env.AGENT_TOOLSDIRECTORY || process.env.RUNNER_TOOL_CACHE || '';
+      const ver = semver.clean(foundRelease.version) || foundRelease.version;
+      const base = path.join(root, 'Python', ver);
+      const stash = scope ? `${base}.stash-${process.pid}` : '';
+      const keep = (e: string) =>
+        e !== manifestArchitecture && e !== `${manifestArchitecture}.complete`;
+
+      if (scope && fs.existsSync(base)) {
+        fs.mkdirSync(stash, {recursive: true});
+        for (const e of fs.readdirSync(base).filter(keep))
+          fs.renameSync(path.join(base, e), path.join(stash, e));
+      }
+
       await installer.installCpythonFromRelease(foundRelease);
 
-      if (architecture !== manifestArchitecture) {
-        // The install script installs to <toolcache>/Python/<resolvedVersion>/<plainArch>.
-        // Relocate to the OS-suffixed arch so tc.find() resolves it on later runs (#1087).
-        const toolcacheRoot =
-          process.env.AGENT_TOOLSDIRECTORY ||
-          process.env.RUNNER_TOOL_CACHE ||
-          '';
-        const resolvedVersion =
-          semver.clean(foundRelease.version) || foundRelease.version;
-        const base = path.join(toolcacheRoot, 'Python', resolvedVersion);
+      if (scope) {
+        if (fs.existsSync(stash)) {
+          for (const e of fs.readdirSync(stash))
+            fs.renameSync(path.join(stash, e), path.join(base, e));
+          fs.rmSync(stash, {recursive: true, force: true});
+        }
         const from = path.join(base, manifestArchitecture);
         const to = path.join(base, architecture);
         if (fs.existsSync(from)) {
-          if (fs.existsSync(to)) {
-            fs.rmSync(to, {recursive: true, force: true});
-          }
+          fs.rmSync(to, {recursive: true, force: true});
           fs.renameSync(from, to);
           fs.writeFileSync(`${to}.complete`, '');
           fs.rmSync(`${from}.complete`, {force: true});
-          core.info(
-            `[1087-arch] renamed ${from} -> ${to} ; toExists=${fs.existsSync(to)} markerExists=${fs.existsSync(`${to}.complete`)}`
-          );
-        } else {
-          core.info(`[1087-arch] rename SKIPPED: from=${from} does not exist`);
+          core.info(`[1087-arch] scoped install -> ${to}`);
         }
       }
 
