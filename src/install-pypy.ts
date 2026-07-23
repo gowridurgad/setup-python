@@ -16,7 +16,8 @@ import {
   isNightlyKeyword,
   writeExactPyPyVersionFile,
   getBinaryDirectory,
-  getDownloadFileName
+  getDownloadFileName,
+  getCacheArchitecture
 } from './utils.js';
 
 export async function installPyPy(
@@ -88,11 +89,13 @@ export async function installPyPy(
     const toolDir = path.join(downloadDir, archiveName);
     let installDir = toolDir;
     if (!isNightlyKeyword(resolvedPyPyVersion)) {
+      // Issue #1087: on self-hosted Linux, cache under the OS-scoped arch
+      // so different distro versions get isolated cache entries.
       installDir = await tc.cacheDir(
         toolDir,
         'PyPy',
         resolvedPythonVersion,
-        architecture
+        getCacheArchitecture(architecture)
       );
     }
 

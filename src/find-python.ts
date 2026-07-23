@@ -1,6 +1,11 @@
 import * as os from 'os';
 import * as path from 'path';
-import {IS_WINDOWS, IS_LINUX, getOSInfo} from './utils.js';
+import {
+  IS_WINDOWS,
+  IS_LINUX,
+  getOSInfo,
+  getCacheArchitecture
+} from './utils.js';
 
 import * as semver from 'semver';
 
@@ -79,6 +84,11 @@ export async function useCpythonVersion(
     architecture += '-freethreaded';
   }
 
+  // Issue #1087: on self-hosted Linux, the tool-cache subdir is scoped by OS
+  // (e.g. 'x64-ubuntu-24.04') so different distro versions do not overwrite
+  // each other. `architecture` stays plain and is used for manifest lookups.
+  const cacheArchitecture = getCacheArchitecture(architecture);
+
   if (checkLatest) {
     manifest = await installer.getManifest();
     const resolvedVersion = (
@@ -102,7 +112,7 @@ export async function useCpythonVersion(
   let installDir: string | null = tc.find(
     'Python',
     semanticVersionSpec,
-    architecture
+    cacheArchitecture
   );
   if (!installDir) {
     core.info(
@@ -118,7 +128,7 @@ export async function useCpythonVersion(
       core.info(`Version ${semanticVersionSpec} is available for downloading`);
       await installer.installCpythonFromRelease(foundRelease);
 
-      installDir = tc.find('Python', semanticVersionSpec, architecture);
+      installDir = tc.find('Python', semanticVersionSpec, cacheArchitecture);
     }
   }
 

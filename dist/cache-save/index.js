@@ -97477,6 +97477,62 @@ function getDownloadFileName(downloadUrl) {
         ? path.join(tempDir, path.basename(downloadUrl))
         : undefined;
 }
+/**
+ * Issue #1087: on self-hosted runners that reuse the tool cache across
+ * different Linux OS versions (e.g. Ubuntu 20.04 / 24.04 containers on the
+ * same host), a Python cached at `Python/<ver>/<arch>` from one OS gets
+ * handed to jobs on another OS and crashes with GLIBC / OpenSSL errors.
+ *
+ * Reads /etc/os-release and returns e.g. "ubuntu-24.04". Returns null when
+ * not applicable (non-Linux, hosted runner, or /etc/os-release incomplete).
+ * Hosted runners are excluded because they ship with a pre-installed,
+ * fully-configured Python at the un-suffixed path; adding a suffix there
+ * would force a wasteful re-install of a less-configured Python.
+ */
+function getOsSuffix() {
+    if (!utils_IS_LINUX)
+        return null;
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
+        return null;
+    try {
+        const content = fs.readFileSync('/etc/os-release', 'utf8');
+        const map = {};
+        for (const line of content.split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq <= 0)
+                continue;
+            const k = line.slice(0, eq).trim();
+            const v = line
+                .slice(eq + 1)
+                .trim()
+                .replace(/^"|"$/g, '');
+            if (k && v)
+                map[k] = v;
+        }
+        const id = map['ID'];
+        const versionId = map['VERSION_ID'];
+        if (!id || !versionId)
+            return null;
+        return `${id}-${versionId}`.replace(/[^A-Za-z0-9._-]/g, '_');
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Issue #1087: returns the architecture string to use as the tool-cache
+ * subdirectory (the third arg to `tc.find` / `tc.cacheDir`). On self-hosted
+ * Linux, this appends the OS id + version so different distro versions get
+ * isolated cache entries. Elsewhere it returns the plain architecture.
+ *
+ * The plain `architecture` value must still be used for manifest lookups
+ * (`findReleaseFromManifest`) — the manifest keys files by hardware arch,
+ * not by OS.
+ */
+function getCacheArchitecture(architecture) {
+    const suffix = getOsSuffix();
+    return suffix ? `${architecture}-${suffix}` : architecture;
+}
 
 ;// CONCATENATED MODULE: ./src/cache-distributions/cache-distributor.ts
 

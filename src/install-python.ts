@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as os from 'os';
 import * as core from '@actions/core';
 import * as tc from '@actions/tool-cache';
 import * as exec from '@actions/exec';
@@ -6,7 +7,12 @@ import {ExecOptions} from '@actions/exec';
 import * as httpm from '@actions/http-client';
 import * as fs from 'fs';
 import * as semver from 'semver';
-import {IS_WINDOWS, IS_LINUX, getDownloadFileName} from './utils.js';
+import {
+  IS_WINDOWS,
+  IS_LINUX,
+  getDownloadFileName,
+  getOsSuffix
+} from './utils.js';
 import {IToolRelease} from '@actions/tool-cache';
 
 const TOKEN = core.getInput('token');
@@ -251,12 +257,23 @@ export async function getManifestFromURL(): Promise<tc.IToolRelease[]> {
   return response.result;
 }
 
-async function installPython(workingDirectory: string) {
+async function installPython(
+  workingDirectory: string,
+  toolCacheOverride?: string
+) {
   const options: ExecOptions = {
     cwd: workingDirectory,
     env: {
       ...process.env,
-      ...(IS_LINUX && {LD_LIBRARY_PATH: path.join(workingDirectory, 'lib')})
+      ...(IS_LINUX && {LD_LIBRARY_PATH: path.join(workingDirectory, 'lib')}),
+      // Issue #1087: on self-hosted Linux, redirect setup.sh's install target
+      // to a temp dir so its `rm -rf $VERSION_PATH` step can't destroy our
+      // previously-scoped sibling directories. We move the finished install
+      // into the real (OS-scoped) tool-cache location afterward.
+      ...(toolCacheOverride && {
+        AGENT_TOOLSDIRECTORY: toolCacheOverride,
+        RUNNER_TOOL_CACHE: toolCacheOverride
+      })
     },
     silent: true,
     listeners: {
@@ -281,6 +298,101 @@ async function installPython(workingDirectory: string) {
   }
 }
 
+/**
+ * Issue #1087: relocate a freshly-installed Python from a scratch tool-cache
+ * root into the real cache under an OS-scoped arch directory.
+ *
+ * Why the scratch root? `setup.sh` inside `actions/python-versions` release
+ * tarballs starts by `rm -rf`-ing `$AGENT_TOOLSDIRECTORY/Python/<version>/`,
+ * which would destroy any previously-scoped sibling directories (e.g. wipe
+ * `x64-ubuntu-20.04/` when a job installs for `x64-ubuntu-24.04/`). By
+ * pointing setup.sh at a fresh temp dir we let it do its destructive setup
+ * safely, then move the finished tree into the real cache ourselves.
+ *
+ * Layout after this function:
+ *   $REAL_TOOL_CACHE/Python/<version>/<arch>-<osId>-<osVer>/         (files)
+ *   $REAL_TOOL_CACHE/Python/<version>/<arch>-<osId>-<osVer>.complete (marker)
+ */
+function relocateFromScratchToScopedCache(
+  release: tc.IToolRelease,
+  scratchRoot: string,
+  suffix: string
+): void {
+  const arch = release.files[0].arch;
+  const scopedArch = `${arch}-${suffix}`;
+
+  const realRoot =
+    process.env['AGENT_TOOLSDIRECTORY'] || process.env['RUNNER_TOOL_CACHE'];
+  if (!realRoot) {
+    core.warning(
+      'Issue #1087: neither AGENT_TOOLSDIRECTORY nor RUNNER_TOOL_CACHE is ' +
+        'set; cannot relocate scratch install. Cache will not be reused.'
+    );
+    return;
+  }
+
+  const src = path.join(scratchRoot, 'Python', release.version, arch);
+  const destVersionDir = path.join(realRoot, 'Python', release.version);
+  const dest = path.join(destVersionDir, scopedArch);
+  const destMarker = `${dest}.complete`;
+
+  core.debug(
+    `Issue #1087: relocate src=${src} -> dest=${dest} (suffix=${suffix})`
+  );
+
+  try {
+    if (!fs.existsSync(src)) {
+      core.warning(
+        `Issue #1087: expected install at ${src} but it does not exist. ` +
+          `Cache will not be scoped.`
+      );
+      return;
+    }
+
+    fs.mkdirSync(destVersionDir, {recursive: true});
+
+    // If a previous run already scoped this exact combination, clear it.
+    if (fs.existsSync(dest)) {
+      fs.rmSync(dest, {recursive: true, force: true});
+    }
+    if (fs.existsSync(destMarker)) {
+      fs.rmSync(destMarker, {force: true});
+    }
+
+    // Try atomic rename first; fall back to copy if src/dest live on
+    // different filesystems (EXDEV, e.g. /tmp vs /opt on some runners).
+    try {
+      fs.renameSync(src, dest);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EXDEV') {
+        core.debug('Issue #1087: cross-device rename; falling back to copy.');
+        fs.cpSync(src, dest, {recursive: true});
+        fs.rmSync(src, {recursive: true, force: true});
+      } else {
+        throw e;
+      }
+    }
+
+    // Write the marker last so tc.find only reports "usable" after the
+    // relocation is fully committed.
+    fs.writeFileSync(destMarker, '');
+
+    core.debug(`Issue #1087: relocated to ${dest}`);
+  } catch (e) {
+    core.warning(
+      `Issue #1087: failed to relocate scratch install into scoped cache: ` +
+        `${e instanceof Error ? e.message : String(e)}`
+    );
+  } finally {
+    // Always clean up the scratch dir; even a partial install leaves debris.
+    try {
+      fs.rmSync(scratchRoot, {recursive: true, force: true});
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 export async function installCpythonFromRelease(release: tc.IToolRelease) {
   if (!release.files || release.files.length === 0) {
     throw new Error('No files found in the release to download.');
@@ -300,8 +412,21 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
       pythonExtractedFolder = await tc.extractTar(pythonPath);
     }
 
+    // Issue #1087: on self-hosted Linux, install into a scratch tool-cache
+    // dir so that setup.sh's destructive `rm -rf $VERSION_PATH` can't wipe
+    // previously-scoped sibling arch directories. Then relocate the result
+    // into the real cache under the OS-scoped arch name.
+    const suffix = getOsSuffix();
+    const scratchRoot = suffix
+      ? fs.mkdtempSync(path.join(os.tmpdir(), 'setup-python-1087-'))
+      : undefined;
+
     core.info('Execute installation script');
-    await installPython(pythonExtractedFolder);
+    await installPython(pythonExtractedFolder, scratchRoot);
+
+    if (suffix && scratchRoot) {
+      relocateFromScratchToScopedCache(release, scratchRoot, suffix);
+    }
   } catch (err) {
     if (err instanceof tc.HTTPError) {
       // Rate limit?
