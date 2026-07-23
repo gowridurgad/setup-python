@@ -98564,9 +98564,16 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         core_debug(`Using freethreaded version of ${semanticVersionSpec}`);
         architecture += '-freethreaded';
     }
+    const manifestArchitecture = architecture;
+    if (IS_LINUX && process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+        const osInfo = await getOSInfo();
+        if (osInfo?.osName && osInfo?.osVersion) {
+            architecture += `-${osInfo.osName}-${osInfo.osVersion}`.toLowerCase();
+        }
+    }
     if (checkLatest) {
         manifest = await getManifest();
-        const resolvedVersion = (await findReleaseFromManifest(semanticVersionSpec, architecture, manifest))?.version;
+        const resolvedVersion = (await findReleaseFromManifest(semanticVersionSpec, manifestArchitecture, manifest))?.version;
         if (resolvedVersion) {
             semanticVersionSpec = resolvedVersion;
             info(`Resolved as '${semanticVersionSpec}'`);
@@ -98578,7 +98585,7 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
     let installDir = find('Python', semanticVersionSpec, architecture);
     if (!installDir) {
         info(`Version ${semanticVersionSpec} was not found in the local cache`);
-        const foundRelease = await findReleaseFromManifest(semanticVersionSpec, architecture, manifest);
+        const foundRelease = await findReleaseFromManifest(semanticVersionSpec, manifestArchitecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             info(`Version ${semanticVersionSpec} is available for downloading`);
             await installCpythonFromRelease(foundRelease);

@@ -79,12 +79,20 @@ export async function useCpythonVersion(
     architecture += '-freethreaded';
   }
 
+  const manifestArchitecture = architecture;
+  if (IS_LINUX && process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+    const osInfo = await getOSInfo();
+    if (osInfo?.osName && osInfo?.osVersion) {
+      architecture += `-${osInfo.osName}-${osInfo.osVersion}`.toLowerCase();
+    }
+  }
+
   if (checkLatest) {
     manifest = await installer.getManifest();
     const resolvedVersion = (
       await installer.findReleaseFromManifest(
         semanticVersionSpec,
-        architecture,
+        manifestArchitecture,
         manifest
       )
     )?.version;
@@ -110,7 +118,7 @@ export async function useCpythonVersion(
     );
     const foundRelease = await installer.findReleaseFromManifest(
       semanticVersionSpec,
-      architecture,
+      manifestArchitecture,
       manifest
     );
 
