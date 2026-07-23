@@ -6,7 +6,12 @@ import {ExecOptions} from '@actions/exec';
 import * as httpm from '@actions/http-client';
 import * as fs from 'fs';
 import * as semver from 'semver';
-import {IS_WINDOWS, IS_LINUX, getDownloadFileName} from './utils.js';
+import {
+  IS_WINDOWS,
+  IS_LINUX,
+  getDownloadFileName,
+  getVersionCacheSuffix
+} from './utils.js';
 import {IToolRelease} from '@actions/tool-cache';
 
 const TOKEN = core.getInput('token');
@@ -302,6 +307,29 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
 
     core.info('Execute installation script');
     await installPython(pythonExtractedFolder);
+
+    const suffix = getVersionCacheSuffix();
+    if (suffix) {
+      const toolCache =
+        process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
+        process.env['RUNNER_TOOL_CACHE'];
+      if (toolCache) {
+        const origDir = path.join(toolCache, 'Python', release.version);
+        const newDir = path.join(toolCache, 'Python', release.version + suffix);
+        try {
+          if (fs.existsSync(origDir) && !fs.existsSync(newDir)) {
+            fs.renameSync(origDir, newDir);
+            core.info(
+              `Renamed cache dir for OS scoping: ${origDir} -> ${newDir}`
+            );
+          }
+        } catch (e) {
+          core.warning(
+            `Failed to rename Python cache dir for OS scoping: ${(e as Error).message}`
+          );
+        }
+      }
+    }
   } catch (err) {
     if (err instanceof tc.HTTPError) {
       // Rate limit?

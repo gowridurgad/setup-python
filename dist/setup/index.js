@@ -97469,6 +97469,37 @@ function getDownloadFileName(downloadUrl) {
         ? external_path_.join(tempDir, external_path_.basename(downloadUrl))
         : undefined;
 }
+function getVersionCacheSuffix() {
+    if (!IS_LINUX)
+        return '';
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
+        return '';
+    try {
+        const content = external_fs_default().readFileSync('/etc/os-release', 'utf8');
+        const map = {};
+        for (const line of content.split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq <= 0)
+                continue;
+            const k = line.slice(0, eq).trim();
+            const v = line
+                .slice(eq + 1)
+                .trim()
+                .replace(/^"|"$/g, '');
+            if (k && v)
+                map[k] = v;
+        }
+        const id = map['ID'];
+        const versionId = map['VERSION_ID'];
+        if (!id || !versionId)
+            return '';
+        const safe = `${id}-${versionId}`.replace(/[^A-Za-z0-9-]/g, '-');
+        return `-${safe}`;
+    }
+    catch {
+        return '';
+    }
+}
 
 ;// CONCATENATED MODULE: ./node_modules/@actions/tool-cache/lib/manifest.js
 var manifest_awaiter = (undefined && undefined.__awaiter) || function (thisArg, _arguments, P, generator) {
@@ -98488,6 +98519,24 @@ async function installCpythonFromRelease(release) {
         }
         info('Execute installation script');
         await installPython(pythonExtractedFolder);
+        const suffix = getVersionCacheSuffix();
+        if (suffix) {
+            const toolCache = process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
+                process.env['RUNNER_TOOL_CACHE'];
+            if (toolCache) {
+                const origDir = external_path_.join(toolCache, 'Python', release.version);
+                const newDir = external_path_.join(toolCache, 'Python', release.version + suffix);
+                try {
+                    if (external_fs_namespaceObject.existsSync(origDir) && !external_fs_namespaceObject.existsSync(newDir)) {
+                        external_fs_namespaceObject.renameSync(origDir, newDir);
+                        info(`Renamed cache dir for OS scoping: ${origDir} -> ${newDir}`);
+                    }
+                }
+                catch (e) {
+                    warning(`Failed to rename Python cache dir for OS scoping: ${e.message}`);
+                }
+            }
+        }
     }
     catch (err) {
         if (err instanceof HTTPError) {
@@ -98575,14 +98624,14 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
             info(`Failed to resolve version ${semanticVersionSpec} from manifest`);
         }
     }
-    let installDir = find('Python', semanticVersionSpec, architecture);
+    let installDir = find('Python', semanticVersionSpec + getVersionCacheSuffix(), architecture);
     if (!installDir) {
         info(`Version ${semanticVersionSpec} was not found in the local cache`);
         const foundRelease = await findReleaseFromManifest(semanticVersionSpec, architecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             info(`Version ${semanticVersionSpec} is available for downloading`);
             await installCpythonFromRelease(foundRelease);
-            installDir = find('Python', semanticVersionSpec, architecture);
+            installDir = find('Python', semanticVersionSpec + getVersionCacheSuffix(), architecture);
         }
     }
     if (!installDir) {

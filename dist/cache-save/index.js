@@ -97477,6 +97477,37 @@ function getDownloadFileName(downloadUrl) {
         ? path.join(tempDir, path.basename(downloadUrl))
         : undefined;
 }
+function getVersionCacheSuffix() {
+    if (!utils_IS_LINUX)
+        return '';
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
+        return '';
+    try {
+        const content = fs.readFileSync('/etc/os-release', 'utf8');
+        const map = {};
+        for (const line of content.split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq <= 0)
+                continue;
+            const k = line.slice(0, eq).trim();
+            const v = line
+                .slice(eq + 1)
+                .trim()
+                .replace(/^"|"$/g, '');
+            if (k && v)
+                map[k] = v;
+        }
+        const id = map['ID'];
+        const versionId = map['VERSION_ID'];
+        if (!id || !versionId)
+            return '';
+        const safe = `${id}-${versionId}`.replace(/[^A-Za-z0-9-]/g, '-');
+        return `-${safe}`;
+    }
+    catch {
+        return '';
+    }
+}
 
 ;// CONCATENATED MODULE: ./src/cache-distributions/cache-distributor.ts
 
