@@ -309,9 +309,6 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
     await installPython(pythonExtractedFolder);
 
     const suffix = getVersionCacheSuffix();
-    core.info(
-      `[1087] version-suffix: suffix='${suffix}' RUNNER_ENVIRONMENT='${process.env['RUNNER_ENVIRONMENT'] || ''}'`
-    );
     if (suffix) {
       const toolCache =
         process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
@@ -323,9 +320,6 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
         const newMarker = newDir + '.complete';
         try {
           if (fs.existsSync(newDir)) {
-            core.info(
-              `[1087] version-suffix: removing stale ${newDir} before rename`
-            );
             fs.rmSync(newDir, {recursive: true, force: true});
           }
           if (fs.existsSync(newMarker)) {
@@ -333,31 +327,17 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
           }
           if (fs.existsSync(origDir)) {
             fs.renameSync(origDir, newDir);
-            core.info(`[1087] version-suffix: renamed ${origDir} -> ${newDir}`);
-          } else {
-            core.warning(
-              `[1087] version-suffix: expected ${origDir} to exist after install but it did not`
-            );
           }
           if (fs.existsSync(origMarker)) {
             fs.renameSync(origMarker, newMarker);
-            core.info(
-              `[1087] version-suffix: renamed marker ${origMarker} -> ${newMarker}`
-            );
           } else {
-            // setup.sh should always write the marker; if it didn't, write our own
             fs.writeFileSync(newMarker, '');
-            core.info(`[1087] version-suffix: wrote marker ${newMarker}`);
           }
         } catch (e) {
           core.warning(
-            `[1087] version-suffix: rename failed: ${(e as Error).message}`
+            `Failed to rename Python cache dir for OS scoping: ${(e as Error).message}`
           );
         }
-      } else {
-        core.warning(
-          '[1087] version-suffix: no AGENT_TOOLSDIRECTORY/RUNNER_TOOL_CACHE'
-        );
       }
     }
   } catch (err) {
