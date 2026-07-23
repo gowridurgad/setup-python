@@ -97469,6 +97469,50 @@ function getDownloadFileName(downloadUrl) {
         ? external_path_.join(tempDir, external_path_.basename(downloadUrl))
         : undefined;
 }
+function getOsScopedToolCacheSegment() {
+    if (!IS_LINUX)
+        return null;
+    try {
+        const content = external_fs_default().readFileSync('/etc/os-release', 'utf8');
+        const map = {};
+        for (const line of content.split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq <= 0)
+                continue;
+            const k = line.slice(0, eq).trim();
+            const v = line
+                .slice(eq + 1)
+                .trim()
+                .replace(/^"|"$/g, '');
+            if (k && v)
+                map[k] = v;
+        }
+        const id = map['ID'];
+        const versionId = map['VERSION_ID'];
+        if (!id || !versionId)
+            return null;
+        const safe = `${id}-${versionId}`.replace(/[^A-Za-z0-9._-]/g, '_');
+        return `os-${safe}`;
+    }
+    catch {
+        return null;
+    }
+}
+function scopeToolCacheByOs() {
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
+        return;
+    const seg = getOsScopedToolCacheSegment();
+    if (!seg)
+        return;
+    for (const varName of ['RUNNER_TOOL_CACHE', 'AGENT_TOOLSDIRECTORY']) {
+        const cur = process.env[varName];
+        if (!cur)
+            continue;
+        if (external_path_.basename(cur) === seg)
+            continue;
+        process.env[varName] = external_path_.join(cur, seg);
+    }
+}
 
 ;// CONCATENATED MODULE: ./node_modules/@actions/tool-cache/lib/manifest.js
 var manifest_awaiter = (undefined && undefined.__awaiter) || function (thisArg, _arguments, P, generator) {
@@ -103004,6 +103048,7 @@ async function run() {
     if (process.env.AGENT_TOOLSDIRECTORY?.trim()) {
         process.env['RUNNER_TOOL_CACHE'] = process.env['AGENT_TOOLSDIRECTORY'];
     }
+    scopeToolCacheByOs();
     core_debug(`Python is expected to be installed into ${process.env['RUNNER_TOOL_CACHE']}`);
     try {
         const versions = resolveVersionInput();

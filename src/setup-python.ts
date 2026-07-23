@@ -12,7 +12,8 @@ import {
   logWarning,
   IS_MAC,
   getVersionInputFromFile,
-  getVersionsInputFromPlainFile
+  getVersionsInputFromPlainFile,
+  scopeToolCacheByOs
 } from './utils.js';
 
 function isPyPyVersion(versionSpec: string) {
@@ -85,6 +86,8 @@ async function run() {
   if (process.env.AGENT_TOOLSDIRECTORY?.trim()) {
     process.env['RUNNER_TOOL_CACHE'] = process.env['AGENT_TOOLSDIRECTORY'];
   }
+
+  scopeToolCacheByOs();
 
   core.debug(
     `Python is expected to be installed into ${process.env['RUNNER_TOOL_CACHE']}`

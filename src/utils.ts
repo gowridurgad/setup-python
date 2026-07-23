@@ -445,3 +445,40 @@ export function getDownloadFileName(downloadUrl: string): string | undefined {
     ? path.join(tempDir, path.basename(downloadUrl))
     : undefined;
 }
+
+export function getOsScopedToolCacheSegment(): string | null {
+  if (!IS_LINUX) return null;
+  try {
+    const content = fs.readFileSync('/etc/os-release', 'utf8');
+    const map: Record<string, string> = {};
+    for (const line of content.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const k = line.slice(0, eq).trim();
+      const v = line
+        .slice(eq + 1)
+        .trim()
+        .replace(/^"|"$/g, '');
+      if (k && v) map[k] = v;
+    }
+    const id = map['ID'];
+    const versionId = map['VERSION_ID'];
+    if (!id || !versionId) return null;
+    const safe = `${id}-${versionId}`.replace(/[^A-Za-z0-9._-]/g, '_');
+    return `os-${safe}`;
+  } catch {
+    return null;
+  }
+}
+
+export function scopeToolCacheByOs(): void {
+  if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted') return;
+  const seg = getOsScopedToolCacheSegment();
+  if (!seg) return;
+  for (const varName of ['RUNNER_TOOL_CACHE', 'AGENT_TOOLSDIRECTORY']) {
+    const cur = process.env[varName];
+    if (!cur) continue;
+    if (path.basename(cur) === seg) continue;
+    process.env[varName] = path.join(cur, seg);
+  }
+}
