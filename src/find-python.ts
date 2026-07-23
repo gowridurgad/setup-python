@@ -137,8 +137,8 @@ export async function useCpythonVersion(
           const to = path.join(path.dirname(from), architecture);
           if (!fs.existsSync(to)) {
             fs.renameSync(from, to);
-            fs.renameSync(`${from}.complete`, `${to}.complete`);
           }
+          fs.writeFileSync(`${to}.complete`, '');
         }
       }
 

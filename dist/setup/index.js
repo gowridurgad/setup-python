@@ -98596,8 +98596,8 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
                     const to = external_path_.join(external_path_.dirname(from), architecture);
                     if (!external_fs_namespaceObject.existsSync(to)) {
                         external_fs_namespaceObject.renameSync(from, to);
-                        external_fs_namespaceObject.renameSync(`${from}.complete`, `${to}.complete`);
                     }
+                    external_fs_namespaceObject.writeFileSync(`${to}.complete`, '');
                 }
             }
             installDir = find('Python', semanticVersionSpec, architecture);
