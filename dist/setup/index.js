@@ -97472,8 +97472,27 @@ function getDownloadFileName(downloadUrl) {
 function getVersionCacheSuffix() {
     if (!IS_LINUX)
         return '';
-    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
-        return '';
+    // Skip only for true GitHub-hosted VMs, detected by presence of the
+    // pre-installed hostedtoolcache Python at the un-scoped path.
+    // bbq-beets / Partner runners also report RUNNER_ENVIRONMENT=github-hosted
+    // but do NOT have pre-installed Python, so they still need scoping.
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted') {
+        const root = process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
+            process.env['RUNNER_TOOL_CACHE'];
+        if (root && external_fs_default().existsSync(external_path_.join(root, 'Python'))) {
+            // Check if there's a *non-scoped* pre-installed Python (any dir under
+            // Python/ that is a plain semver, not already OS-suffixed).
+            try {
+                const entries = external_fs_default().readdirSync(external_path_.join(root, 'Python'));
+                const hasPreinstalled = entries.some(e => /^\d+\.\d+\.\d+$/.test(e) && !e.includes('-'));
+                if (hasPreinstalled)
+                    return '';
+            }
+            catch {
+                /* fall through */
+            }
+        }
+    }
     try {
         const content = external_fs_default().readFileSync('/etc/os-release', 'utf8');
         const map = {};
@@ -98520,6 +98539,7 @@ async function installCpythonFromRelease(release) {
         info('Execute installation script');
         await installPython(pythonExtractedFolder);
         const suffix = getVersionCacheSuffix();
+        info(`[1087] version-suffix: suffix='${suffix}' RUNNER_ENVIRONMENT='${process.env['RUNNER_ENVIRONMENT'] || ''}'`);
         if (suffix) {
             const toolCache = process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
                 process.env['RUNNER_TOOL_CACHE'];
@@ -98529,17 +98549,36 @@ async function installCpythonFromRelease(release) {
                 const origMarker = origDir + '.complete';
                 const newMarker = newDir + '.complete';
                 try {
-                    if (external_fs_namespaceObject.existsSync(origDir) && !external_fs_namespaceObject.existsSync(newDir)) {
-                        external_fs_namespaceObject.renameSync(origDir, newDir);
-                        info(`Renamed cache dir for OS scoping: ${origDir} -> ${newDir}`);
+                    if (external_fs_namespaceObject.existsSync(newDir)) {
+                        info(`[1087] version-suffix: removing stale ${newDir} before rename`);
+                        external_fs_namespaceObject.rmSync(newDir, { recursive: true, force: true });
                     }
-                    if (external_fs_namespaceObject.existsSync(origMarker) && !external_fs_namespaceObject.existsSync(newMarker)) {
+                    if (external_fs_namespaceObject.existsSync(newMarker)) {
+                        external_fs_namespaceObject.rmSync(newMarker, { force: true });
+                    }
+                    if (external_fs_namespaceObject.existsSync(origDir)) {
+                        external_fs_namespaceObject.renameSync(origDir, newDir);
+                        info(`[1087] version-suffix: renamed ${origDir} -> ${newDir}`);
+                    }
+                    else {
+                        warning(`[1087] version-suffix: expected ${origDir} to exist after install but it did not`);
+                    }
+                    if (external_fs_namespaceObject.existsSync(origMarker)) {
                         external_fs_namespaceObject.renameSync(origMarker, newMarker);
+                        info(`[1087] version-suffix: renamed marker ${origMarker} -> ${newMarker}`);
+                    }
+                    else {
+                        // setup.sh should always write the marker; if it didn't, write our own
+                        external_fs_namespaceObject.writeFileSync(newMarker, '');
+                        info(`[1087] version-suffix: wrote marker ${newMarker}`);
                     }
                 }
                 catch (e) {
-                    warning(`Failed to rename Python cache dir for OS scoping: ${e.message}`);
+                    warning(`[1087] version-suffix: rename failed: ${e.message}`);
                 }
+            }
+            else {
+                warning('[1087] version-suffix: no AGENT_TOOLSDIRECTORY/RUNNER_TOOL_CACHE');
             }
         }
     }

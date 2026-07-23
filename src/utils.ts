@@ -448,7 +448,28 @@ export function getDownloadFileName(downloadUrl: string): string | undefined {
 
 export function getVersionCacheSuffix(): string {
   if (!IS_LINUX) return '';
-  if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted') return '';
+  // Skip only for true GitHub-hosted VMs, detected by presence of the
+  // pre-installed hostedtoolcache Python at the un-scoped path.
+  // bbq-beets / Partner runners also report RUNNER_ENVIRONMENT=github-hosted
+  // but do NOT have pre-installed Python, so they still need scoping.
+  if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted') {
+    const root =
+      process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
+      process.env['RUNNER_TOOL_CACHE'];
+    if (root && fs.existsSync(path.join(root, 'Python'))) {
+      // Check if there's a *non-scoped* pre-installed Python (any dir under
+      // Python/ that is a plain semver, not already OS-suffixed).
+      try {
+        const entries = fs.readdirSync(path.join(root, 'Python'));
+        const hasPreinstalled = entries.some(
+          e => /^\d+\.\d+\.\d+$/.test(e) && !e.includes('-')
+        );
+        if (hasPreinstalled) return '';
+      } catch {
+        /* fall through */
+      }
+    }
+  }
   try {
     const content = fs.readFileSync('/etc/os-release', 'utf8');
     const map: Record<string, string> = {};
