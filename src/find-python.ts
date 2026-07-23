@@ -1,6 +1,5 @@
 import * as os from 'os';
 import * as path from 'path';
-import * as fs from 'fs';
 import {IS_WINDOWS, IS_LINUX, getOSInfo} from './utils.js';
 
 import * as semver from 'semver';
@@ -128,17 +127,21 @@ export async function useCpythonVersion(
       await installer.installCpythonFromRelease(foundRelease);
 
       if (architecture !== manifestArchitecture) {
-        const from = tc.find(
+        // The install script creates .../<version>/x64. Re-cache that folder
+        // under the OS-suffixed arch via the toolkit so it is reliably found on
+        // later runs (creates the dir + matching .complete marker) (#1087).
+        const plainDir = tc.find(
           'Python',
           semanticVersionSpec,
           manifestArchitecture
         );
-        if (from) {
-          const to = path.join(path.dirname(from), architecture);
-          if (!fs.existsSync(to)) {
-            fs.renameSync(from, to);
-          }
-          fs.writeFileSync(`${to}.complete`, '');
+        if (plainDir) {
+          await tc.cacheDir(
+            plainDir,
+            'Python',
+            semanticVersionSpec,
+            architecture
+          );
         }
       }
 
