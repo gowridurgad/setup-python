@@ -1,5 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 import {IS_WINDOWS, IS_LINUX, getOSInfo} from './utils.js';
 
 import * as semver from 'semver';
@@ -127,21 +128,24 @@ export async function useCpythonVersion(
       await installer.installCpythonFromRelease(foundRelease);
 
       if (architecture !== manifestArchitecture) {
-        // The install script creates .../<version>/x64. Re-cache that folder
-        // under the OS-suffixed arch via the toolkit so it is reliably found on
-        // later runs (creates the dir + matching .complete marker) (#1087).
-        const plainDir = tc.find(
-          'Python',
-          semanticVersionSpec,
-          manifestArchitecture
-        );
-        if (plainDir) {
-          await tc.cacheDir(
-            plainDir,
-            'Python',
-            semanticVersionSpec,
-            architecture
-          );
+        // The install script installs to <toolcache>/Python/<resolvedVersion>/<plainArch>.
+        // Relocate to the OS-suffixed arch so tc.find() resolves it on later runs (#1087).
+        const toolcacheRoot =
+          process.env.AGENT_TOOLSDIRECTORY ||
+          process.env.RUNNER_TOOL_CACHE ||
+          '';
+        const resolvedVersion =
+          semver.clean(foundRelease.version) || foundRelease.version;
+        const base = path.join(toolcacheRoot, 'Python', resolvedVersion);
+        const from = path.join(base, manifestArchitecture);
+        const to = path.join(base, architecture);
+        if (fs.existsSync(from)) {
+          if (fs.existsSync(to)) {
+            fs.rmSync(to, {recursive: true, force: true});
+          }
+          fs.renameSync(from, to);
+          fs.writeFileSync(`${to}.complete`, '');
+          fs.rmSync(`${from}.complete`, {force: true});
         }
       }
 
