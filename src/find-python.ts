@@ -126,9 +126,7 @@ export async function useCpythonVersion(
     if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
       core.info(`Version ${semanticVersionSpec} is available for downloading`);
 
-      // OS-scoped arch suffix (#1087): setup.sh does `rm -rf Python/<ver>/`,
-      // so we must stash sibling scoped arch dirs across the install, then
-      // rename the freshly-installed <manifestArch> to <scopedArch>.
+      // Stash sibling OS-scoped arch dirs, install, restore, then rename.
       const scope = architecture !== manifestArchitecture;
       const root =
         process.env.AGENT_TOOLSDIRECTORY || process.env.RUNNER_TOOL_CACHE || '';
@@ -159,7 +157,6 @@ export async function useCpythonVersion(
           fs.renameSync(from, to);
           fs.writeFileSync(`${to}.complete`, '');
           fs.rmSync(`${from}.complete`, {force: true});
-          core.info(`[1087-arch] scoped install -> ${to}`);
         }
       }
 

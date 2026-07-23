@@ -98589,9 +98589,7 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         const foundRelease = await findReleaseFromManifest(semanticVersionSpec, manifestArchitecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             info(`Version ${semanticVersionSpec} is available for downloading`);
-            // OS-scoped arch suffix (#1087): setup.sh does `rm -rf Python/<ver>/`,
-            // so we must stash sibling scoped arch dirs across the install, then
-            // rename the freshly-installed <manifestArch> to <scopedArch>.
+            // Stash sibling OS-scoped arch dirs, install, restore, then rename.
             const scope = architecture !== manifestArchitecture;
             const root = process.env.AGENT_TOOLSDIRECTORY || process.env.RUNNER_TOOL_CACHE || '';
             const ver = node_modules_semver.clean(foundRelease.version) || foundRelease.version;
@@ -98617,7 +98615,6 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
                     external_fs_namespaceObject.renameSync(from, to);
                     external_fs_namespaceObject.writeFileSync(`${to}.complete`, '');
                     external_fs_namespaceObject.rmSync(`${from}.complete`, { force: true });
-                    info(`[1087-arch] scoped install -> ${to}`);
                 }
             }
             installDir = find('Python', semanticVersionSpec, architecture);
