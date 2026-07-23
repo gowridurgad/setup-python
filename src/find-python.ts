@@ -1,6 +1,12 @@
 import * as os from 'os';
 import * as path from 'path';
-import {IS_WINDOWS, IS_LINUX, getOSInfo} from './utils.js';
+import * as fs from 'fs';
+import {
+  IS_WINDOWS,
+  IS_LINUX,
+  getOSInfo,
+  getVersionCacheSuffix
+} from './utils.js';
 
 import * as semver from 'semver';
 
@@ -52,6 +58,37 @@ async function installPip(pythonLocation: string) {
   }
 }
 
+function findScopedPython(
+  semanticVersionSpec: string,
+  architecture: string
+): string | null {
+  const suffix = getVersionCacheSuffix();
+  const toolCache =
+    process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
+    process.env['RUNNER_TOOL_CACHE'];
+  if (!suffix || !toolCache) {
+    return tc.find('Python', semanticVersionSpec, architecture);
+  }
+  const pythonRoot = path.join(toolCache, 'Python');
+  if (!fs.existsSync(pythonRoot)) return null;
+  let bestVer: string | null = null;
+  let bestDir: string | null = null;
+  for (const entry of fs.readdirSync(pythonRoot)) {
+    if (!entry.endsWith(suffix)) continue;
+    const ver = entry.slice(0, entry.length - suffix.length);
+    if (!semver.valid(ver)) continue;
+    if (!semver.satisfies(ver, semanticVersionSpec)) continue;
+    const candidate = path.join(pythonRoot, entry, architecture);
+    const marker = path.join(pythonRoot, entry + '.complete');
+    if (!fs.existsSync(candidate) || !fs.existsSync(marker)) continue;
+    if (!bestVer || semver.gt(ver, bestVer)) {
+      bestVer = ver;
+      bestDir = candidate;
+    }
+  }
+  return bestDir;
+}
+
 export async function useCpythonVersion(
   version: string,
   architecture: string,
@@ -99,8 +136,7 @@ export async function useCpythonVersion(
     }
   }
 
-  let installDir: string | null = tc.find(
-    'Python',
+  let installDir: string | null = findScopedPython(
     semanticVersionSpec,
     architecture
   );
@@ -118,7 +154,7 @@ export async function useCpythonVersion(
       core.info(`Version ${semanticVersionSpec} is available for downloading`);
       await installer.installCpythonFromRelease(foundRelease);
 
-      installDir = tc.find('Python', semanticVersionSpec, architecture);
+      installDir = findScopedPython(semanticVersionSpec, architecture);
     }
   }
 

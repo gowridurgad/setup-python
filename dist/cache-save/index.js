@@ -97477,6 +97477,56 @@ function getDownloadFileName(downloadUrl) {
         ? path.join(tempDir, path.basename(downloadUrl))
         : undefined;
 }
+function getVersionCacheSuffix() {
+    if (!utils_IS_LINUX)
+        return '';
+    // Skip only for true GitHub-hosted VMs, detected by presence of the
+    // pre-installed hostedtoolcache Python at the un-scoped path.
+    // bbq-beets / Partner runners also report RUNNER_ENVIRONMENT=github-hosted
+    // but do NOT have pre-installed Python, so they still need scoping.
+    if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted') {
+        const root = process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
+            process.env['RUNNER_TOOL_CACHE'];
+        if (root && fs.existsSync(path.join(root, 'Python'))) {
+            // Check if there's a *non-scoped* pre-installed Python (any dir under
+            // Python/ that is a plain semver, not already OS-suffixed).
+            try {
+                const entries = fs.readdirSync(path.join(root, 'Python'));
+                const hasPreinstalled = entries.some(e => /^\d+\.\d+\.\d+$/.test(e) && !e.includes('-'));
+                if (hasPreinstalled)
+                    return '';
+            }
+            catch {
+                /* fall through */
+            }
+        }
+    }
+    try {
+        const content = fs.readFileSync('/etc/os-release', 'utf8');
+        const map = {};
+        for (const line of content.split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq <= 0)
+                continue;
+            const k = line.slice(0, eq).trim();
+            const v = line
+                .slice(eq + 1)
+                .trim()
+                .replace(/^"|"$/g, '');
+            if (k && v)
+                map[k] = v;
+        }
+        const id = map['ID'];
+        const versionId = map['VERSION_ID'];
+        if (!id || !versionId)
+            return '';
+        const safe = `${id}-${versionId}`.replace(/[^A-Za-z0-9-]/g, '-');
+        return `-${safe}`;
+    }
+    catch {
+        return '';
+    }
+}
 
 ;// CONCATENATED MODULE: ./src/cache-distributions/cache-distributor.ts
 

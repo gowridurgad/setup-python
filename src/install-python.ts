@@ -6,7 +6,12 @@ import {ExecOptions} from '@actions/exec';
 import * as httpm from '@actions/http-client';
 import * as fs from 'fs';
 import * as semver from 'semver';
-import {IS_WINDOWS, IS_LINUX, getDownloadFileName} from './utils.js';
+import {
+  IS_WINDOWS,
+  IS_LINUX,
+  getDownloadFileName,
+  getVersionCacheSuffix
+} from './utils.js';
 import {IToolRelease} from '@actions/tool-cache';
 
 const TOKEN = core.getInput('token');
@@ -302,6 +307,39 @@ export async function installCpythonFromRelease(release: tc.IToolRelease) {
 
     core.info('Execute installation script');
     await installPython(pythonExtractedFolder);
+
+    const suffix = getVersionCacheSuffix();
+    if (suffix) {
+      const toolCache =
+        process.env['AGENT_TOOLSDIRECTORY']?.trim() ||
+        process.env['RUNNER_TOOL_CACHE'];
+      if (toolCache) {
+        const origDir = path.join(toolCache, 'Python', release.version);
+        const newDir = path.join(toolCache, 'Python', release.version + suffix);
+        const origMarker = origDir + '.complete';
+        const newMarker = newDir + '.complete';
+        try {
+          if (fs.existsSync(newDir)) {
+            fs.rmSync(newDir, {recursive: true, force: true});
+          }
+          if (fs.existsSync(newMarker)) {
+            fs.rmSync(newMarker, {force: true});
+          }
+          if (fs.existsSync(origDir)) {
+            fs.renameSync(origDir, newDir);
+          }
+          if (fs.existsSync(origMarker)) {
+            fs.renameSync(origMarker, newMarker);
+          } else {
+            fs.writeFileSync(newMarker, '');
+          }
+        } catch (e) {
+          core.warning(
+            `Failed to rename Python cache dir for OS scoping: ${(e as Error).message}`
+          );
+        }
+      }
+    }
   } catch (err) {
     if (err instanceof tc.HTTPError) {
       // Rate limit?
