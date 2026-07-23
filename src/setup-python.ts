@@ -87,9 +87,6 @@ async function run() {
     process.env['RUNNER_TOOL_CACHE'] = process.env['AGENT_TOOLSDIRECTORY'];
   }
 
-  // Issue #1087: on self-hosted Linux, scope the tool-cache root by OS id +
-  // version so runners that switch between distro versions do not reuse a
-  // Python built against a different glibc / OpenSSL. No-op on hosted runners.
   scopeToolCacheByOs();
 
   core.debug(

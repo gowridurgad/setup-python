@@ -97469,13 +97469,6 @@ function getDownloadFileName(downloadUrl) {
         ? external_path_.join(tempDir, external_path_.basename(downloadUrl))
         : undefined;
 }
-/**
- * Issue #1087: on Linux, scope the tool-cache root by OS id + version so a
- * self-hosted runner that switches between different distro versions
- * (e.g. Ubuntu 20.04 / 24.04) does not reuse a Python built against a
- * different glibc / OpenSSL. Returns e.g. "os-ubuntu-24.04", or null when
- * not applicable (non-Linux, or /etc/os-release unavailable/incomplete).
- */
 function getOsScopedToolCacheSegment() {
     if (!IS_LINUX)
         return null;
@@ -97505,21 +97498,6 @@ function getOsScopedToolCacheSegment() {
         return null;
     }
 }
-/**
- * Issue #1087: apply {@link getOsScopedToolCacheSegment} to the tool-cache
- * root env vars so all downstream consumers (`@actions/tool-cache`, and the
- * `setup.sh` inside `actions/python-versions` release tarballs) transparently
- * install/read under an OS-scoped root.
- *
- * IMPORTANT: only applied on self-hosted runners. GitHub-hosted runners ship
- * with a pre-installed, fully-configured Python under the un-scoped path
- * (`/opt/hostedtoolcache/Python/…`); redirecting them would cause a needless
- * re-install of a less-configured Python (e.g. breaks numpy source builds on
- * freethreaded 3.13). Detected via the documented `RUNNER_ENVIRONMENT` env var
- * (`github-hosted` on hosted, `self-hosted` on self-hosted runners).
- *
- * Idempotent and a no-op off Linux or on hosted runners.
- */
 function scopeToolCacheByOs() {
     if (process.env['RUNNER_ENVIRONMENT'] === 'github-hosted')
         return;
@@ -97531,7 +97509,7 @@ function scopeToolCacheByOs() {
         if (!cur)
             continue;
         if (external_path_.basename(cur) === seg)
-            continue; // already scoped
+            continue;
         process.env[varName] = external_path_.join(cur, seg);
     }
 }
@@ -103070,9 +103048,6 @@ async function run() {
     if (process.env.AGENT_TOOLSDIRECTORY?.trim()) {
         process.env['RUNNER_TOOL_CACHE'] = process.env['AGENT_TOOLSDIRECTORY'];
     }
-    // Issue #1087: on self-hosted Linux, scope the tool-cache root by OS id +
-    // version so runners that switch between distro versions do not reuse a
-    // Python built against a different glibc / OpenSSL. No-op on hosted runners.
     scopeToolCacheByOs();
     core_debug(`Python is expected to be installed into ${process.env['RUNNER_TOOL_CACHE']}`);
     try {
