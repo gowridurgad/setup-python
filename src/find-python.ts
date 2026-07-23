@@ -108,11 +108,15 @@ export async function useCpythonVersion(
     }
   }
 
+  core.info(
+    `[1087-arch] manifestArch=${manifestArchitecture} scopedArch=${architecture} RUNNER_TOOL_CACHE=${process.env.RUNNER_TOOL_CACHE} AGENT_TOOLSDIRECTORY=${process.env.AGENT_TOOLSDIRECTORY} RUNNER_ENVIRONMENT=${process.env.RUNNER_ENVIRONMENT}`
+  );
   let installDir: string | null = tc.find(
     'Python',
     semanticVersionSpec,
     architecture
   );
+  core.info(`[1087-arch] tc.find returned: ${installDir || '<empty>'}`);
   if (!installDir) {
     core.info(
       `Version ${semanticVersionSpec} was not found in the local cache`
@@ -146,6 +150,11 @@ export async function useCpythonVersion(
           fs.renameSync(from, to);
           fs.writeFileSync(`${to}.complete`, '');
           fs.rmSync(`${from}.complete`, {force: true});
+          core.info(
+            `[1087-arch] renamed ${from} -> ${to} ; toExists=${fs.existsSync(to)} markerExists=${fs.existsSync(`${to}.complete`)}`
+          );
+        } else {
+          core.info(`[1087-arch] rename SKIPPED: from=${from} does not exist`);
         }
       }
 

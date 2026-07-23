@@ -98583,7 +98583,9 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
             info(`Failed to resolve version ${semanticVersionSpec} from manifest`);
         }
     }
+    info(`[1087-arch] manifestArch=${manifestArchitecture} scopedArch=${architecture} RUNNER_TOOL_CACHE=${process.env.RUNNER_TOOL_CACHE} AGENT_TOOLSDIRECTORY=${process.env.AGENT_TOOLSDIRECTORY} RUNNER_ENVIRONMENT=${process.env.RUNNER_ENVIRONMENT}`);
     let installDir = find('Python', semanticVersionSpec, architecture);
+    info(`[1087-arch] tc.find returned: ${installDir || '<empty>'}`);
     if (!installDir) {
         info(`Version ${semanticVersionSpec} was not found in the local cache`);
         const foundRelease = await findReleaseFromManifest(semanticVersionSpec, manifestArchitecture, manifest);
@@ -98607,6 +98609,10 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
                     external_fs_namespaceObject.renameSync(from, to);
                     external_fs_namespaceObject.writeFileSync(`${to}.complete`, '');
                     external_fs_namespaceObject.rmSync(`${from}.complete`, { force: true });
+                    info(`[1087-arch] renamed ${from} -> ${to} ; toExists=${external_fs_namespaceObject.existsSync(to)} markerExists=${external_fs_namespaceObject.existsSync(`${to}.complete`)}`);
+                }
+                else {
+                    info(`[1087-arch] rename SKIPPED: from=${from} does not exist`);
                 }
             }
             installDir = find('Python', semanticVersionSpec, architecture);
