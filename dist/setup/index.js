@@ -98518,6 +98518,7 @@ async function installCpythonFromRelease(release) {
 
 
 
+
 // Python has "scripts" or "bin" directories where command-line tools that come with packages are installed.
 // This is where pip is, along with anything that pip installs.
 // There is a separate directory for `pip install --user`.
@@ -98550,7 +98551,7 @@ async function installPip(pythonLocation) {
         await exec_exec(`${pythonLocation}/python -m pip install --upgrade pip==${pipVersion} --disable-pip-version-check --no-warn-script-location`);
     }
 }
-async function useCpythonVersion(version, architecture, updateEnvironment, checkLatest, allowPreReleases, freethreaded) {
+async function useCpythonVersion(version, architecture, updateEnvironment, checkLatest, allowPreReleases, freethreaded, scopeCacheByOs = false) {
     let manifest = null;
     const { version: desugaredVersionSpec, freethreaded: versionFreethreaded } = desugarVersion(version);
     let semanticVersionSpec = pythonVersionToSemantic(desugaredVersionSpec, allowPreReleases);
@@ -98564,9 +98565,18 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         core_debug(`Using freethreaded version of ${semanticVersionSpec}`);
         architecture += '-freethreaded';
     }
+    const manifestArchitecture = architecture;
+    if (scopeCacheByOs &&
+        IS_LINUX &&
+        process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+        const osInfo = await getOSInfo();
+        if (osInfo?.osName && osInfo?.osVersion) {
+            architecture += `-${osInfo.osName}-${osInfo.osVersion}`.toLowerCase();
+        }
+    }
     if (checkLatest) {
         manifest = await getManifest();
-        const resolvedVersion = (await findReleaseFromManifest(semanticVersionSpec, architecture, manifest))?.version;
+        const resolvedVersion = (await findReleaseFromManifest(semanticVersionSpec, manifestArchitecture, manifest))?.version;
         if (resolvedVersion) {
             semanticVersionSpec = resolvedVersion;
             info(`Resolved as '${semanticVersionSpec}'`);
@@ -98578,10 +98588,37 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
     let installDir = find('Python', semanticVersionSpec, architecture);
     if (!installDir) {
         info(`Version ${semanticVersionSpec} was not found in the local cache`);
-        const foundRelease = await findReleaseFromManifest(semanticVersionSpec, architecture, manifest);
+        const foundRelease = await findReleaseFromManifest(semanticVersionSpec, manifestArchitecture, manifest);
         if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
             info(`Version ${semanticVersionSpec} is available for downloading`);
+            // Stash sibling OS-scoped arch dirs, install, restore, then rename.
+            const scope = architecture !== manifestArchitecture;
+            const root = process.env.AGENT_TOOLSDIRECTORY || process.env.RUNNER_TOOL_CACHE || '';
+            const ver = node_modules_semver.clean(foundRelease.version) || foundRelease.version;
+            const base = external_path_.join(root, 'Python', ver);
+            const stash = scope ? `${base}.stash-${process.pid}` : '';
+            const keep = (e) => e !== manifestArchitecture && e !== `${manifestArchitecture}.complete`;
+            if (scope && external_fs_namespaceObject.existsSync(base)) {
+                external_fs_namespaceObject.mkdirSync(stash, { recursive: true });
+                for (const e of external_fs_namespaceObject.readdirSync(base).filter(keep))
+                    external_fs_namespaceObject.renameSync(external_path_.join(base, e), external_path_.join(stash, e));
+            }
             await installCpythonFromRelease(foundRelease);
+            if (scope) {
+                if (external_fs_namespaceObject.existsSync(stash)) {
+                    for (const e of external_fs_namespaceObject.readdirSync(stash))
+                        external_fs_namespaceObject.renameSync(external_path_.join(stash, e), external_path_.join(base, e));
+                    external_fs_namespaceObject.rmSync(stash, { recursive: true, force: true });
+                }
+                const from = external_path_.join(base, manifestArchitecture);
+                const to = external_path_.join(base, architecture);
+                if (external_fs_namespaceObject.existsSync(from)) {
+                    external_fs_namespaceObject.rmSync(to, { recursive: true, force: true });
+                    external_fs_namespaceObject.renameSync(from, to);
+                    external_fs_namespaceObject.writeFileSync(`${to}.complete`, '');
+                    external_fs_namespaceObject.rmSync(`${from}.complete`, { force: true });
+                }
+            }
             installDir = find('Python', semanticVersionSpec, architecture);
         }
     }
@@ -103010,6 +103047,7 @@ async function run() {
         const checkLatest = getBooleanInput('check-latest');
         const allowPreReleases = getBooleanInput('allow-prereleases');
         const freethreaded = getBooleanInput('freethreaded');
+        const scopeCacheByOs = getBooleanInput('scope-cache-by-os');
         if (versions.length) {
             let pythonVersion = '';
             const arch = getInput('architecture') || external_os_.arch();
@@ -103030,7 +103068,7 @@ async function run() {
                     if (version.startsWith('2')) {
                         warning('The support for python 2.7 was removed on June 19, 2023. Related issue: https://github.com/actions/setup-python/issues/672');
                     }
-                    const installed = await useCpythonVersion(version, arch, updateEnvironment, checkLatest, allowPreReleases, freethreaded);
+                    const installed = await useCpythonVersion(version, arch, updateEnvironment, checkLatest, allowPreReleases, freethreaded, scopeCacheByOs);
                     pythonVersion = installed.version;
                     info(`Successfully set up ${installed.impl} (${pythonVersion})`);
                 }

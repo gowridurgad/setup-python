@@ -31,6 +31,9 @@ inputs:
     default: false
   pip-version:
     description: "Used to specify the version of pip to install with the Python. Supported format: major[.minor][.patch]."
+  scope-cache-by-os:
+    description: "On self-hosted Linux runners, scope the tool-cache entry by distro and version so Python installs for different Linux versions stay isolated."
+    default: false
 outputs:
   python-version:
     description: "The installed Python or PyPy version. Useful when given a version range as input."

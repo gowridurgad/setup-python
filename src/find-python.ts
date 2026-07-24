@@ -1,5 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 import {IS_WINDOWS, IS_LINUX, getOSInfo} from './utils.js';
 
 import * as semver from 'semver';
@@ -58,7 +59,8 @@ export async function useCpythonVersion(
   updateEnvironment: boolean,
   checkLatest: boolean,
   allowPreReleases: boolean,
-  freethreaded: boolean
+  freethreaded: boolean,
+  scopeCacheByOs = false
 ): Promise<InstalledVersion> {
   let manifest: tc.IToolRelease[] | null = null;
   const {version: desugaredVersionSpec, freethreaded: versionFreethreaded} =
@@ -79,12 +81,24 @@ export async function useCpythonVersion(
     architecture += '-freethreaded';
   }
 
+  const manifestArchitecture = architecture;
+  if (
+    scopeCacheByOs &&
+    IS_LINUX &&
+    process.env.RUNNER_ENVIRONMENT !== 'github-hosted'
+  ) {
+    const osInfo = await getOSInfo();
+    if (osInfo?.osName && osInfo?.osVersion) {
+      architecture += `-${osInfo.osName}-${osInfo.osVersion}`.toLowerCase();
+    }
+  }
+
   if (checkLatest) {
     manifest = await installer.getManifest();
     const resolvedVersion = (
       await installer.findReleaseFromManifest(
         semanticVersionSpec,
-        architecture,
+        manifestArchitecture,
         manifest
       )
     )?.version;
@@ -110,13 +124,46 @@ export async function useCpythonVersion(
     );
     const foundRelease = await installer.findReleaseFromManifest(
       semanticVersionSpec,
-      architecture,
+      manifestArchitecture,
       manifest
     );
 
     if (foundRelease && foundRelease.files && foundRelease.files.length > 0) {
       core.info(`Version ${semanticVersionSpec} is available for downloading`);
+
+      // Stash sibling OS-scoped arch dirs, install, restore, then rename.
+      const scope = architecture !== manifestArchitecture;
+      const root =
+        process.env.AGENT_TOOLSDIRECTORY || process.env.RUNNER_TOOL_CACHE || '';
+      const ver = semver.clean(foundRelease.version) || foundRelease.version;
+      const base = path.join(root, 'Python', ver);
+      const stash = scope ? `${base}.stash-${process.pid}` : '';
+      const keep = (e: string) =>
+        e !== manifestArchitecture && e !== `${manifestArchitecture}.complete`;
+
+      if (scope && fs.existsSync(base)) {
+        fs.mkdirSync(stash, {recursive: true});
+        for (const e of fs.readdirSync(base).filter(keep))
+          fs.renameSync(path.join(base, e), path.join(stash, e));
+      }
+
       await installer.installCpythonFromRelease(foundRelease);
+
+      if (scope) {
+        if (fs.existsSync(stash)) {
+          for (const e of fs.readdirSync(stash))
+            fs.renameSync(path.join(stash, e), path.join(base, e));
+          fs.rmSync(stash, {recursive: true, force: true});
+        }
+        const from = path.join(base, manifestArchitecture);
+        const to = path.join(base, architecture);
+        if (fs.existsSync(from)) {
+          fs.rmSync(to, {recursive: true, force: true});
+          fs.renameSync(from, to);
+          fs.writeFileSync(`${to}.complete`, '');
+          fs.rmSync(`${from}.complete`, {force: true});
+        }
+      }
 
       installDir = tc.find('Python', semanticVersionSpec, architecture);
     }
