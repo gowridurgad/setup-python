@@ -59,7 +59,8 @@ export async function useCpythonVersion(
   updateEnvironment: boolean,
   checkLatest: boolean,
   allowPreReleases: boolean,
-  freethreaded: boolean
+  freethreaded: boolean,
+  scopeCacheByOs = false
 ): Promise<InstalledVersion> {
   let manifest: tc.IToolRelease[] | null = null;
   const {version: desugaredVersionSpec, freethreaded: versionFreethreaded} =
@@ -81,7 +82,11 @@ export async function useCpythonVersion(
   }
 
   const manifestArchitecture = architecture;
-  if (IS_LINUX && process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+  if (
+    scopeCacheByOs &&
+    IS_LINUX &&
+    process.env.RUNNER_ENVIRONMENT !== 'github-hosted'
+  ) {
     const osInfo = await getOSInfo();
     if (osInfo?.osName && osInfo?.osVersion) {
       architecture += `-${osInfo.osName}-${osInfo.osVersion}`.toLowerCase();

@@ -94,6 +94,7 @@ async function run() {
     const checkLatest = core.getBooleanInput('check-latest');
     const allowPreReleases = core.getBooleanInput('allow-prereleases');
     const freethreaded = core.getBooleanInput('freethreaded');
+    const scopeCacheByOs = core.getBooleanInput('scope-cache-by-os');
 
     if (versions.length) {
       let pythonVersion = '';
@@ -135,7 +136,8 @@ async function run() {
             updateEnvironment,
             checkLatest,
             allowPreReleases,
-            freethreaded
+            freethreaded,
+            scopeCacheByOs
           );
           pythonVersion = installed.version;
           core.info(`Successfully set up ${installed.impl} (${pythonVersion})`);
