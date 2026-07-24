@@ -98551,7 +98551,7 @@ async function installPip(pythonLocation) {
         await exec_exec(`${pythonLocation}/python -m pip install --upgrade pip==${pipVersion} --disable-pip-version-check --no-warn-script-location`);
     }
 }
-async function useCpythonVersion(version, architecture, updateEnvironment, checkLatest, allowPreReleases, freethreaded) {
+async function useCpythonVersion(version, architecture, updateEnvironment, checkLatest, allowPreReleases, freethreaded, scopeCacheByOs = false) {
     let manifest = null;
     const { version: desugaredVersionSpec, freethreaded: versionFreethreaded } = desugarVersion(version);
     let semanticVersionSpec = pythonVersionToSemantic(desugaredVersionSpec, allowPreReleases);
@@ -98566,7 +98566,9 @@ async function useCpythonVersion(version, architecture, updateEnvironment, check
         architecture += '-freethreaded';
     }
     const manifestArchitecture = architecture;
-    if (IS_LINUX && process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+    if (scopeCacheByOs &&
+        IS_LINUX &&
+        process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
         const osInfo = await getOSInfo();
         if (osInfo?.osName && osInfo?.osVersion) {
             architecture += `-${osInfo.osName}-${osInfo.osVersion}`.toLowerCase();
@@ -103045,6 +103047,7 @@ async function run() {
         const checkLatest = getBooleanInput('check-latest');
         const allowPreReleases = getBooleanInput('allow-prereleases');
         const freethreaded = getBooleanInput('freethreaded');
+        const scopeCacheByOs = getBooleanInput('scope-cache-by-os');
         if (versions.length) {
             let pythonVersion = '';
             const arch = getInput('architecture') || external_os_.arch();
@@ -103065,7 +103068,7 @@ async function run() {
                     if (version.startsWith('2')) {
                         warning('The support for python 2.7 was removed on June 19, 2023. Related issue: https://github.com/actions/setup-python/issues/672');
                     }
-                    const installed = await useCpythonVersion(version, arch, updateEnvironment, checkLatest, allowPreReleases, freethreaded);
+                    const installed = await useCpythonVersion(version, arch, updateEnvironment, checkLatest, allowPreReleases, freethreaded, scopeCacheByOs);
                     pythonVersion = installed.version;
                     info(`Successfully set up ${installed.impl} (${pythonVersion})`);
                 }
